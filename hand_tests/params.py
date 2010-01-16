@@ -36,7 +36,7 @@ if __name__ == "__main__":
 	reg.LoadManagers()
 
 	# get the gabble Connection Manager
-	cm = reg.GetManager('theonering')
+	cm = reg.GetManager('bluewire')
 
 	# get the parameters required to make a Jabber connection
 	cm[CONN_MGR_INTERFACE].GetParameters('sip',

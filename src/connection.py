@@ -39,7 +39,7 @@ import channel_manager
 _moduleLogger = logging.getLogger("connection")
 
 
-class TheOneRingConnection(
+class BluewireConnection(
 	tp.Connection,
 	requests.RequestsMixin,
 	contacts.ContactsMixin,

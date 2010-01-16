@@ -20,13 +20,13 @@ import connection
 _moduleLogger = logging.getLogger("connection_manager")
 
 
-class TheOneRingConnectionManager(tp.ConnectionManager):
+class BluewireConnectionManager(tp.ConnectionManager):
 
 	def __init__(self, shutdown_func=None):
 		tp.ConnectionManager.__init__(self, constants._telepathy_implementation_name_)
 
 		# self._protos is from super
-		self._protos[constants._telepathy_protocol_name_] = connection.TheOneRingConnection
+		self._protos[constants._telepathy_protocol_name_] = connection.BluewireConnection
 		self._on_shutdown = shutdown_func
 		_moduleLogger.info("Connection manager created")
 

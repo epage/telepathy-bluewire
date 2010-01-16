@@ -1,0 +1,12 @@
+[Profile]
+Manager=bluewire
+Protocol=sip
+DisplayName=Bluetooth
+IconName = im-bluewire
+ConfigurationUI = haze-plugin
+SupportsInvisible = 1
+Capabilities = chat-p2p, voice-p2p, supports-alias
+VCardDefault = 1
+VCardField = X-BT
+SupportedPresences = offline,available,away,hidden
+SupportsPresenceMessage = false

@@ -39,7 +39,7 @@ class Example(object):
 		reg.LoadManagers()
 
 		# get the gabble Connection Manager
-		self.cm = cm = reg.GetManager('theonering')
+		self.cm = cm = reg.GetManager('bluewire')
 
 		# get the parameters required to make a Jabber connection
 		# Begin Example 2-3

@@ -1,4 +1,4 @@
-PROJECT_NAME=theonering
+PROJECT_NAME=bluewire
 SOURCE_PATH=src
 SOURCE=$(shell find $(SOURCE_PATH) -iname "*.py")
 PROGRAM=$(SOURCE_PATH)/telepathy-$(PROJECT_NAME)
@@ -25,7 +25,7 @@ CTAGS=ctags-exuberant
 all: test
 
 run: $(OBJ)
-	$(SOURCE_PATH)/telepathy-theonering
+	$(SOURCE_PATH)/telepathy-$(PROJECT_NAME)
 
 profile: $(OBJ)
 	$(PROFILE_GEN) $(PROGRAM)
@@ -44,7 +44,7 @@ package: $(OBJ)
 	cp $(SOURCE_PATH)/constants.py  $(BUILD_PATH)/generic
 	$(foreach file, $(DATA), cp $(file) $(BUILD_PATH)/generic/$(subst /,!,$(file)) ; )
 	$(foreach file, $(SOURCE), cp $(file) $(BUILD_PATH)/generic/$(subst /,!,$(file)) ; )
-	cp $(SOURCE_PATH)/telepathy-theonering $(BUILD_PATH)/generic/
+	cp $(SOURCE_PATH)/telepathy-$(PROJECT_NAME) $(BUILD_PATH)/generic/
 	cp support/$(PROJECT_NAME).manager $(BUILD_PATH)/generic
 	cp support/$(PROJECT_NAME).profile.* $(BUILD_PATH)/generic
 	cp support/org.freedesktop.Telepathy.ConnectionManager.$(PROJECT_NAME).service $(BUILD_PATH)/generic

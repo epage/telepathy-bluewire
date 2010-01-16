@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 """
-Telepathy-TheOneRing - Telepathy plugin for GoogleVoice
+Telepathy-Bluewire - Telepathy plugin for GoogleVoice
 Copyright (C) 2009  Ed Page eopage AT byu DOT net
 
 This library is free software; you can redistribute it and/or
@@ -37,7 +37,7 @@ import connection_manager
 IDLE_TIMEOUT = 5000
 
 
-def run_theonering(persist):
+def run_bluewire(persist):
 	linux_utils.set_process_name(constants.__app_name__)
 
 	try:
@@ -66,7 +66,7 @@ def run_theonering(persist):
 	signal.signal(signal.SIGTERM, quit)
 
 	try:
-		manager = connection_manager.TheOneRingConnectionManager(shutdown_func=shutdown_callback)
+		manager = connection_manager.BluewireConnectionManager(shutdown_func=shutdown_callback)
 	except dbus.exceptions.NameExistsException:
 		logging.warning('Failed to acquire bus name, connection manager already running?')
 		sys.exit(1)
@@ -87,7 +87,7 @@ def main(logToFile):
 		if e.errno != 17:
 			raise
 
-	telepathy_utils.debug_divert_messages(os.getenv('THEONERING_LOGFILE'))
+	telepathy_utils.debug_divert_messages(os.getenv('BLUEWIRE_LOGFILE'))
 	if logToFile:
 		logging.basicConfig(
 			level=logging.DEBUG,
@@ -101,15 +101,15 @@ def main(logToFile):
 			format='(%(asctime)s) %(levelname)s:%(name)s:%(message)s',
 			datefmt='%H:%M:%S',
 		)
-	logging.info("telepathy-theonering %s-%s" % (constants.__version__, constants.__build__))
+	logging.info("telepathy-bluewire %s-%s" % (constants.__version__, constants.__build__))
 	logging.debug("OS: %s" % (os.uname()[0], ))
 	logging.debug("Kernel: %s (%s) for %s" % os.uname()[2:])
 	logging.debug("Hostname: %s" % os.uname()[1])
 
-	persist = 'THEONERING_PERSIST' in os.environ
+	persist = 'BLUEWIRE_PERSIST' in os.environ
 
 	try:
-		run_theonering(persist)
+		run_bluewire(persist)
 	finally:
 		logging.shutdown()
 

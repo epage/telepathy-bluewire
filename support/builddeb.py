@@ -12,18 +12,10 @@ import constants
 
 
 __appname__ = constants.__app_name__
-__description__ = """Google Voice Communication Plugin
+__description__ = """Bluetooth Communications Plugin
 Features:
 .
-* Send Texts and Receive both Texts and Voicemail through your chat window
-.
-* Save battery life by setting your status to "Away"
-.
-* Block incoming calls by switching your status to "Hidden"
-.
-* Access to all of your Google Voice contacts
-.
-Homepage: http://theonering.garage.maemo.org
+Homepage:
 """
 __author__ = "Ed Page"
 __email__ = "eopage@byu.net"
@@ -38,7 +30,7 @@ __changelog__ = """
 __postinstall__ = """#!/bin/sh -e
 
 gtk-update-icon-cache -f /usr/share/icons/hicolor
-rm -f ~/.telepathy-theonering/theonering.log
+rm -f ~/.telepathy-bluewire/bluewire.log
 """
 
 def find_files(path):
@@ -71,7 +63,7 @@ def build_package(distribution):
 	p = py2deb.Py2deb(__appname__)
 	p.prettyName = constants.__pretty_app_name__
 	p.description = __description__
-	p.bugTracker = "https://bugs.maemo.org/enter_bug.cgi?product=theonering"
+	p.bugTracker = "https://bugs.maemo.org/enter_bug.cgi?product=bluewire"
 	#p.upgradeDescription = __changelog__.split("\n\n", 1)[0]
 	p.author = __author__
 	p.mail = __email__
@@ -102,27 +94,27 @@ def build_package(distribution):
 	p.changelog = __changelog__
 	p.postinstall = __postinstall__
 	p.icon = {
-		"debian": "26x26-theonering.png",
-		"diablo": "26x26-theonering.png",
-		"fremantle": "64x64-theonering.png", # Fremantle natively uses 48x48
-		"mer": "64x64-theonering.png",
+		"debian": "26x26-bluewire.png",
+		"diablo": "26x26-bluewire.png",
+		"fremantle": "64x64-bluewire.png", # Fremantle natively uses 48x48
+		"mer": "64x64-bluewire.png",
 	}[distribution]
 	for relPath, files in unflatten_files(find_files(".")).iteritems():
-		fullPath = "/usr/lib/theonering"
+		fullPath = "/usr/lib/bluewire"
 		if relPath:
 			fullPath += os.sep+relPath
 		p[fullPath] = list(
 			"|".join((oldName, newName))
 			for (oldName, newName) in files
 		)
-	p["/usr/share/dbus-1/services"] = ["org.freedesktop.Telepathy.ConnectionManager.theonering.service"]
+	p["/usr/share/dbus-1/services"] = ["org.freedesktop.Telepathy.ConnectionManager.bluewire.service"]
 	if distribution in ("debian", ):
-		p["/usr/share/mission-control/profiles"] = ["theonering.profile.%s|theonering.profile"% distribution]
+		p["/usr/share/mission-control/profiles"] = ["bluewire.profile.%s|bluewire.profile"% distribution]
 	elif distribution in ("diablo", "fremantle", "mer"):
-		p["/usr/share/osso-rtcom"] = ["theonering.profile.%s|theonering.profile"% distribution]
-	p["/usr/lib/telepathy"] = ["telepathy-theonering"]
-	p["/usr/share/telepathy/managers"] = ["theonering.manager"]
-	p["/usr/share/icons/hicolor/26x26/hildon"] = ["26x26-theonering.png|im-theonering.png"]
+		p["/usr/share/osso-rtcom"] = ["bluewire.profile.%s|bluewire.profile"% distribution]
+	p["/usr/lib/telepathy"] = ["telepathy-bluewire"]
+	p["/usr/share/telepathy/managers"] = ["bluewire.manager"]
+	p["/usr/share/icons/hicolor/26x26/hildon"] = ["26x26-bluewire.png|im-bluewire.png"]
 
 	if distribution == "debian":
 		print p

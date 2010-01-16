@@ -1,12 +1,12 @@
 [Profile]
-Manager=theonering
+Manager=bluewire
 Protocol=sip
-DisplayName=Google Voice
-IconName = im-theonering
+DisplayName=Bluetooth
+IconName = im-bluewire
 ConfigurationUI = haze-plugin
 SupportsInvisible = 1
 Capabilities = chat-p2p, voice-p2p, supports-alias
 VCardDefault = 1
-VCardField = X-GV
+VCardField = X-BT
 SupportedPresences = offline,available,away,hidden
 

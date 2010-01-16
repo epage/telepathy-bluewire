@@ -10,7 +10,7 @@ import util.misc as util_misc
 _moduleLogger = logging.getLogger("handle")
 
 
-class TheOneRingHandle(tp.Handle):
+class BluewireHandle(tp.Handle):
 	"""
 	Instances are memoized
 	"""
@@ -32,22 +32,22 @@ class TheOneRingHandle(tp.Handle):
 	name = property(tp.Handle.get_name)
 
 
-class ConnectionHandle(TheOneRingHandle):
+class ConnectionHandle(BluewireHandle):
 
 	def __init__(self, connection, id):
 		handleType = telepathy.HANDLE_TYPE_CONTACT
 		handleName = connection.username
-		TheOneRingHandle.__init__(self, connection, id, handleType, handleName)
+		BluewireHandle.__init__(self, connection, id, handleType, handleName)
 
 		self.profile = connection.username
 
 
-class ContactHandle(TheOneRingHandle):
+class ContactHandle(BluewireHandle):
 
 	def __init__(self, connection, id, contactId, phoneNumber):
 		handleType = telepathy.HANDLE_TYPE_CONTACT
 		handleName = self.to_handle_name(contactId, phoneNumber)
-		TheOneRingHandle.__init__(self, connection, id, handleType, handleName)
+		BluewireHandle.__init__(self, connection, id, handleType, handleName)
 
 		self._contactId = contactId
 		self._phoneNumber = util_misc.strip_number(phoneNumber)
@@ -97,12 +97,12 @@ class ContactHandle(TheOneRingHandle):
 		return self._conn.addressbook.get_contact_details(self._id)
 
 
-class ListHandle(TheOneRingHandle):
+class ListHandle(BluewireHandle):
 
 	def __init__(self, connection, id, listName):
 		handleType = telepathy.HANDLE_TYPE_LIST
 		handleName = listName
-		TheOneRingHandle.__init__(self, connection, id, handleType, handleName)
+		BluewireHandle.__init__(self, connection, id, handleType, handleName)
 
 
 _HANDLE_TYPE_MAPPING = {

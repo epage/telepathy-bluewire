@@ -8,11 +8,11 @@ import simple_presence
 _moduleLogger = logging.getLogger('presence')
 
 
-class PresenceMixin(tp.ConnectionInterfacePresence, simple_presence.TheOneRingPresence):
+class PresenceMixin(tp.ConnectionInterfacePresence, simple_presence.BluewirePresence):
 
 	def __init__(self):
 		tp.ConnectionInterfacePresence.__init__(self)
-		simple_presence.TheOneRingPresence.__init__(self)
+		simple_presence.BluewirePresence.__init__(self)
 
 	@gtk_toolbox.log_exception(_moduleLogger)
 	def GetStatuses(self):

@@ -11,9 +11,9 @@ import gvoice.state_machine as state_machine
 _moduleLogger = logging.getLogger("simple_presence")
 
 
-class TheOneRingPresence(object):
+class BluewirePresence(object):
 
-	# Note: these strings are also in the theonering.profile file
+	# Note: these strings are also in the bluewire.profile file
 	ONLINE = 'available'
 	AWAY = 'away'
 	HIDDEN = 'hidden'
@@ -57,19 +57,19 @@ class TheOneRingPresence(object):
 			if isinstance(h, handle.ConnectionHandle):
 				isDnd = self.session.backend.is_dnd()
 				if isDnd:
-					presence = TheOneRingPresence.HIDDEN
+					presence = BluewirePresence.HIDDEN
 				else:
 					state = self.session.stateMachine.state
 					if state == state_machine.StateMachine.STATE_ACTIVE:
-						presence = TheOneRingPresence.ONLINE
+						presence = BluewirePresence.ONLINE
 					elif state == state_machine.StateMachine.STATE_IDLE:
-						presence = TheOneRingPresence.AWAY
+						presence = BluewirePresence.AWAY
 					else:
 						raise telepathy.errors.InvalidArgument("Unsupported state on the state machine: %s" % state)
-				presenceType = TheOneRingPresence.TO_PRESENCE_TYPE[presence]
+				presenceType = BluewirePresence.TO_PRESENCE_TYPE[presence]
 			else:
-				presence = TheOneRingPresence.ONLINE
-				presenceType = TheOneRingPresence.TO_PRESENCE_TYPE[presence]
+				presence = BluewirePresence.ONLINE
+				presenceType = BluewirePresence.TO_PRESENCE_TYPE[presence]
 
 			presences[h] = (presenceType, presence)
 		return presences
@@ -89,11 +89,11 @@ class TheOneRingPresence(object):
 		_moduleLogger.info("Setting Presence to '%s'" % status)
 
 
-class SimplePresenceMixin(tp.ConnectionInterfaceSimplePresence, TheOneRingPresence):
+class SimplePresenceMixin(tp.ConnectionInterfaceSimplePresence, BluewirePresence):
 
 	def __init__(self):
 		tp.ConnectionInterfaceSimplePresence.__init__(self)
-		TheOneRingPresence.__init__(self)
+		BluewirePresence.__init__(self)
 
 		self._implement_property_get(
 			tp.CONNECTION_INTERFACE_SIMPLE_PRESENCE,

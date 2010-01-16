@@ -19,7 +19,7 @@ def get_registry():
 
 
 def get_connection_manager(reg):
-	cm = reg.GetManager('theonering')
+	cm = reg.GetManager('bluewire')
 	return cm
 
 
