@@ -1,4 +1,3 @@
-import os
 import weakref
 import logging
 
@@ -9,16 +8,16 @@ import tp
 import util.go_utils as gobject_utils
 import util.misc as misc_utils
 
-import gvoice
+import protocol
 import handle
 
-import aliasing
-import avatars
-import capabilities
-import contacts
-import presence
+#import aliasing
+#import avatars
+#import capabilities
+#import contacts
+#import presence
 import requests
-import simple_presence
+#import simple_presence
 
 import autogv
 import channel_manager
@@ -31,33 +30,25 @@ class TheOneRingOptions(object):
 
 	useGVContacts = True
 
-	assert gvoice.session.Session._DEFAULTS["contacts"][1] == "hours"
-	contactsPollPeriodInHours = gvoice.session.Session._DEFAULTS["contacts"][0]
-
-	assert gvoice.session.Session._DEFAULTS["voicemail"][1] == "minutes"
-	voicemailPollPeriodInMinutes = gvoice.session.Session._DEFAULTS["voicemail"][0]
-
-	assert gvoice.session.Session._DEFAULTS["texts"][1] == "minutes"
-	textsPollPeriodInMinutes = gvoice.session.Session._DEFAULTS["texts"][0]
+	assert protocol.session.Session._DEFAULTS["contacts"][1] == "hours"
+	contactsPollPeriodInHours = protocol.session.Session._DEFAULTS["contacts"][0]
 
 	def __init__(self, parameters = None):
 		if parameters is None:
 			return
 		self.useGVContacts = parameters["use-gv-contacts"]
 		self.contactsPollPeriodInHours = parameters['contacts-poll-period-in-hours']
-		self.voicemailPollPeriodInMinutes = parameters['voicemail-poll-period-in-minutes']
-		self.textsPollPeriodInMinutes = parameters['texts-poll-period-in-minutes']
 
 
 class BluewireConnection(
 	tp.Connection,
-	aliasing.AliasingMixin,
-	avatars.AvatarsMixin,
-	capabilities.CapabilitiesMixin,
-	contacts.ContactsMixin,
-	presence.PresenceMixin,
+	#aliasing.AliasingMixin,
+	#avatars.AvatarsMixin,
+	#capabilities.CapabilitiesMixin,
+	#contacts.ContactsMixin,
+	#presence.PresenceMixin,
 	requests.RequestsMixin,
-	simple_presence.SimplePresenceMixin,
+	#simple_presence.SimplePresenceMixin,
 ):
 
 	# overiding base class variable
@@ -87,62 +78,38 @@ class BluewireConnection(
 	@misc_utils.log_exception(_moduleLogger)
 	def __init__(self, manager, parameters):
 		self.check_parameters(parameters)
-		account = unicode(parameters['account'])
-		encodedAccount = parameters['account'].encode('utf-8')
-		encodedPassword = parameters['password'].encode('utf-8')
-		encodedCallback = misc_utils.normalize_number(parameters['forward'].encode('utf-8'))
-		if encodedCallback and not misc_utils.is_valid_number(encodedCallback):
-			raise telepathy.errors.InvalidArgument("Invalid forwarding number")
 
 		# Connection init must come first
 		self.__options = TheOneRingOptions(parameters)
-		self.__session = gvoice.session.Session(
-			cookiePath = None,
+		self.__session = protocol.session.Session(
 			defaults = {
 				"contacts": (self.__options.contactsPollPeriodInHours, "hours"),
-				"voicemail": (self.__options.voicemailPollPeriodInMinutes, "minutes"),
-				"texts": (self.__options.textsPollPeriodInMinutes, "minutes"),
 			},
 		)
 		tp.Connection.__init__(
 			self,
 			constants._telepathy_protocol_name_,
-			account,
+			"device",
 			constants._telepathy_implementation_name_
 		)
-		aliasing.AliasingMixin.__init__(self)
-		avatars.AvatarsMixin.__init__(self)
-		capabilities.CapabilitiesMixin.__init__(self)
-		contacts.ContactsMixin.__init__(self)
-		presence.PresenceMixin.__init__(self)
+		#aliasing.AliasingMixin.__init__(self)
+		#avatars.AvatarsMixin.__init__(self)
+		#capabilities.CapabilitiesMixin.__init__(self)
+		#contacts.ContactsMixin.__init__(self)
+		#presence.PresenceMixin.__init__(self)
 		requests.RequestsMixin.__init__(self)
-		simple_presence.SimplePresenceMixin.__init__(self)
+		#simple_presence.SimplePresenceMixin.__init__(self)
 
 		self.__manager = weakref.proxy(manager)
-		self.__credentials = (
-			encodedAccount,
-			encodedPassword,
-		)
-		self.__callbackNumberParameter = encodedCallback
 		self.__channelManager = channel_manager.ChannelManager(self)
-
-		self.__cachePath = os.sep.join((constants._data_path_, "cache", self.username))
-		try:
-			os.makedirs(self.__cachePath)
-		except OSError, e:
-			if e.errno != 17:
-				raise
 
 		self.set_self_handle(handle.create_handle(self, 'connection'))
 		self._plumbing = [
-			autogv.NewGVConversations(weakref.ref(self)),
-			autogv.RefreshVoicemail(weakref.ref(self)),
 			autogv.AutoDisconnect(weakref.ref(self)),
-			autogv.DelayEnableContactIntegration(constants._telepathy_implementation_name_),
 		]
 		self._delayedConnect = gobject_utils.Async(self._delayed_connect)
 
-		_moduleLogger.info("Connection to the account %s created" % account)
+		_moduleLogger.info("Connection created")
 		self._timedDisconnect = autogv.TimedDisconnect(weakref.ref(self))
 		self._timedDisconnect.start()
 
@@ -206,12 +173,6 @@ class BluewireConnection(
 			for plumber in self._plumbing:
 				plumber.start()
 			self.session.login(*self.__credentials)
-			if not self.__callbackNumberParameter:
-				callback = gvoice.backend.get_sane_callback(
-					self.session.backend
-				)
-				self.__callbackNumberParameter = misc_utils.normalize_number(callback)
-			self.session.backend.set_callback_number(self.__callbackNumberParameter)
 
 			subscribeHandle = self.get_handle_by_name(telepathy.HANDLE_TYPE_LIST, "subscribe")
 			subscribeProps = self.generate_props(telepathy.CHANNEL_TYPE_CONTACT_LIST, subscribeHandle, False)
@@ -219,10 +180,6 @@ class BluewireConnection(
 			publishHandle = self.get_handle_by_name(telepathy.HANDLE_TYPE_LIST, "publish")
 			publishProps = self.generate_props(telepathy.CHANNEL_TYPE_CONTACT_LIST, publishHandle, False)
 			self.__channelManager.channel_for_props(publishProps, signal=True)
-		except gvoice.backend.NetworkError:
-			_moduleLogger.exception("Connection Failed")
-			self.disconnect(telepathy.CONNECTION_STATUS_REASON_NETWORK_ERROR)
-			return
 		except Exception:
 			_moduleLogger.exception("Connection Failed")
 			self.disconnect(telepathy.CONNECTION_STATUS_REASON_AUTHENTICATION_FAILED)
