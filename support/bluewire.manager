@@ -3,4 +3,4 @@ Name = bluewire
 BusName = org.freedesktop.Telepathy.ConnectionManager.bluewire
 ObjectPath = /org/freedesktop/Telepathy/ConnectionManager/bluewire
 
-[Protocol sip]
+[Protocol bluetooth]

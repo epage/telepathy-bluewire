@@ -23,7 +23,7 @@ __version__ = constants.__version__
 __build__ = constants.__build__
 __changelog__ = """
 0.1.0
-* Initial release
+* Pre-Alpha Development Release
 """
 
 
@@ -61,7 +61,10 @@ def build_package(distribution):
 
 	py2deb.Py2deb.SECTIONS = py2deb.SECTIONS_BY_POLICY[distribution]
 	p = py2deb.Py2deb(__appname__)
-	p.prettyName = constants.__pretty_app_name__
+	if distribution == "debian":
+		p.prettyName = constants.__pretty_app_name__
+	else:
+		p.prettyName = "Google Voice plugin for Conversations and Calls"
 	p.description = __description__
 	p.bugTracker = "https://bugs.maemo.org/enter_bug.cgi?product=bluewire"
 	#p.upgradeDescription = __changelog__.split("\n\n", 1)[0]

@@ -34,7 +34,7 @@ import constants
 import connection_manager
 
 
-IDLE_TIMEOUT = 5000
+IDLE_TIMEOUT = 10
 
 
 def run_bluewire(persist):
@@ -47,23 +47,23 @@ def run_bluewire(persist):
 			raise
 
 	@gobject_utils.async
-	def quit():
+	def on_quit():
 		manager.quit()
 		mainloop.quit()
 
 	def timeout_cb():
 		if len(manager._connections) == 0:
 			logging.info('No connection received - quitting')
-			quit()
+			on_quit()
 		return False
 
 	if persist:
 		shutdown_callback = None
 	else:
-		gobject.timeout_add(IDLE_TIMEOUT, timeout_cb)
-		shutdown_callback = quit
+		gobject_utils.timeout_add_seconds(IDLE_TIMEOUT, timeout_cb)
+		shutdown_callback = on_quit
 
-	signal.signal(signal.SIGTERM, quit)
+	signal.signal(signal.SIGTERM, lambda: on_quit)
 
 	try:
 		manager = connection_manager.BluewireConnectionManager(shutdown_func=shutdown_callback)
@@ -97,7 +97,7 @@ def main(logToFile):
 		)
 	else:
 		logging.basicConfig(
-			level=logging.INFO,
+			level=logging.DEBUG,
 			format='(%(asctime)s) %(levelname)s:%(name)s:%(message)s',
 			datefmt='%H:%M:%S',
 		)

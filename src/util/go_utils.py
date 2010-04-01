@@ -4,8 +4,37 @@ from __future__ import with_statement
 
 import time
 import functools
+import threading
+import Queue
+import logging
 
 import gobject
+
+import algorithms
+import misc
+
+
+_moduleLogger = logging.getLogger(__name__)
+
+
+def make_idler(func):
+	"""
+	Decorator that makes a generator-function into a function that will continue execution on next call
+	"""
+	a = []
+
+	@functools.wraps(func)
+	def decorated_func(*args, **kwds):
+		if not a:
+			a.append(func(*args, **kwds))
+		try:
+			a[0].next()
+			return True
+		except StopIteration:
+			del a[:]
+			return False
+
+	return decorated_func
 
 
 def async(func):
@@ -27,6 +56,136 @@ def async(func):
 		gobject.idle_add(async_function)
 
 	return new_function
+
+
+class Async(object):
+
+	def __init__(self, func, once = True):
+		self.__func = func
+		self.__idleId = None
+		self.__once = once
+
+	def start(self):
+		assert self.__idleId is None
+		if self.__once:
+			self.__idleId = gobject.idle_add(self._on_once)
+		else:
+			self.__idleId = gobject.idle_add(self.__func)
+
+	def is_running(self):
+		return self.__idleId is not None
+
+	def cancel(self):
+		if self.__idleId is not None:
+			gobject.source_remove(self.__idleId)
+			self.__idleId = None
+
+	def __call__(self):
+		return self.start()
+
+	@misc.log_exception(_moduleLogger)
+	def _on_once(self):
+		self.cancel()
+		try:
+			self.__func()
+		except Exception:
+			pass
+		return False
+
+
+class Timeout(object):
+
+	def __init__(self, func):
+		self.__func = func
+		self.__timeoutId = None
+
+	def start(self, **kwds):
+		assert self.__timeoutId is None
+
+		assert len(kwds) == 1
+		timeoutInSeconds = kwds["seconds"]
+		assert 0 <= timeoutInSeconds
+		if timeoutInSeconds == 0:
+			self.__timeoutId = gobject.idle_add(self._on_once)
+		else:
+			self.__timeoutId = timeout_add_seconds(timeoutInSeconds, self._on_once)
+
+	def is_running(self):
+		return self.__timeoutId is not None
+
+	def cancel(self):
+		if self.__timeoutId is not None:
+			gobject.source_remove(self.__timeoutId)
+			self.__timeoutId = None
+
+	def __call__(self, **kwds):
+		return self.start(**kwds)
+
+	@misc.log_exception(_moduleLogger)
+	def _on_once(self):
+		self.cancel()
+		try:
+			self.__func()
+		except Exception:
+			pass
+		return False
+
+
+_QUEUE_EMPTY = object()
+
+
+class AsyncPool(object):
+
+	def __init__(self):
+		self.__workQueue = Queue.Queue()
+		self.__thread = threading.Thread(
+			name = type(self).__name__,
+			target = self.__consume_queue,
+		)
+		self.__isRunning = True
+
+	def start(self):
+		self.__thread.start()
+
+	def stop(self):
+		self.__isRunning = False
+		for _ in algorithms.itr_available(self.__workQueue):
+			pass # eat up queue to cut down dumb work
+		self.__workQueue.put(_QUEUE_EMPTY)
+
+	def add_task(self, func, args, kwds, on_success, on_error):
+		task = func, args, kwds, on_success, on_error
+		self.__workQueue.put(task)
+
+	@misc.log_exception(_moduleLogger)
+	def __trampoline_callback(self, callback, result):
+		if self.__isRunning:
+			try:
+				callback(result)
+			except Exception:
+				pass
+		else:
+			_moduleLogger.info("Blocked call to %r" % (callback, ))
+		return False
+
+	@misc.log_exception(_moduleLogger)
+	def __consume_queue(self):
+		while True:
+			task = self.__workQueue.get()
+			if task is _QUEUE_EMPTY:
+				break
+			func, args, kwds, on_success, on_error = task
+
+			try:
+				result = func(*args, **kwds)
+				isError = False
+			except Exception, e:
+				result = e
+				isError = True
+			self.__workQueue.task_done()
+
+			callback = on_success if not isError else on_error
+			gobject.idle_add(self.__trampoline_callback, callback, result)
 
 
 def throttled(minDelay, queue):
@@ -68,3 +227,18 @@ def throttled(minDelay, queue):
 		return new_function
 
 	return actual_decorator
+
+
+def _old_timeout_add_seconds(timeout, callback):
+	return gobject.timeout_add(timeout * 1000, callback)
+
+
+def _timeout_add_seconds(timeout, callback):
+	return gobject.timeout_add_seconds(timeout, callback)
+
+
+try:
+	gobject.timeout_add_seconds
+	timeout_add_seconds = _timeout_add_seconds
+except AttributeError:
+	timeout_add_seconds = _old_timeout_add_seconds

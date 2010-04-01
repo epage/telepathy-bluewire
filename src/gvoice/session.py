@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+import os
+import time
 import logging
 
 import backend
@@ -8,17 +10,39 @@ import conversations
 import state_machine
 
 
-_moduleLogger = logging.getLogger("gvoice.session")
+_moduleLogger = logging.getLogger(__name__)
 
 
 class Session(object):
 
-	def __init__(self, cookiePath = None):
+	_DEFAULTS = {
+		"contacts": (12, "hours"),
+		"voicemail": (120, "minutes"),
+		"texts": (10, "minutes"),
+	}
+
+	_MINIMUM_MESSAGE_PERIOD = state_machine.to_seconds(minutes=30)
+
+	def __init__(self, cookiePath = None, defaults = None):
+		if defaults is None:
+			defaults = self._DEFAULTS
+		else:
+			for key, (quant, unit) in defaults.iteritems():
+				if quant == 0:
+					defaults[key] = (self._DEFAULTS[key], unit)
+				elif quant < 0:
+					defaults[key] = (state_machine.UpdateStateMachine.INFINITE_PERIOD, unit)
 		self._username = None
 		self._password = None
 
 		self._backend = backend.GVoiceBackend(cookiePath)
 
+		if defaults["contacts"][0] == state_machine.UpdateStateMachine.INFINITE_PERIOD:
+			contactsPeriodInSeconds = state_machine.UpdateStateMachine.INFINITE_PERIOD
+		else:
+			contactsPeriodInSeconds = state_machine.to_seconds(
+				**{defaults["contacts"][1]: defaults["contacts"][0],}
+			)
 		self._addressbook = addressbook.Addressbook(self._backend)
 		self._addressbookStateMachine = state_machine.UpdateStateMachine([self.addressbook], "Addressbook")
 		self._addressbookStateMachine.set_state_strategy(
@@ -27,13 +51,21 @@ class Session(object):
 		)
 		self._addressbookStateMachine.set_state_strategy(
 			state_machine.StateMachine.STATE_IDLE,
-			state_machine.ConstantStateStrategy(state_machine.to_milliseconds(hours=6))
+			state_machine.NopStateStrategy()
 		)
 		self._addressbookStateMachine.set_state_strategy(
 			state_machine.StateMachine.STATE_ACTIVE,
-			state_machine.ConstantStateStrategy(state_machine.to_milliseconds(hours=2))
+			state_machine.ConstantStateStrategy(contactsPeriodInSeconds)
 		)
 
+		if defaults["voicemail"][0] == state_machine.UpdateStateMachine.INFINITE_PERIOD:
+			voicemailPeriodInSeconds = state_machine.UpdateStateMachine.INFINITE_PERIOD
+			idleVoicemailPeriodInSeconds = state_machine.UpdateStateMachine.INFINITE_PERIOD
+		else:
+			voicemailPeriodInSeconds = state_machine.to_seconds(
+				**{defaults["voicemail"][1]: defaults["voicemail"][0],}
+			)
+			idleVoicemailPeriodInSeconds = max(voicemailPeriodInSeconds * 4, self._MINIMUM_MESSAGE_PERIOD)
 		self._voicemails = conversations.Conversations(self._backend.get_voicemails)
 		self._voicemailsStateMachine = state_machine.UpdateStateMachine([self.voicemails], "Voicemail")
 		self._voicemailsStateMachine.set_state_strategy(
@@ -42,16 +74,30 @@ class Session(object):
 		)
 		self._voicemailsStateMachine.set_state_strategy(
 			state_machine.StateMachine.STATE_IDLE,
-			state_machine.ConstantStateStrategy(state_machine.to_milliseconds(minutes=60))
+			state_machine.ConstantStateStrategy(idleVoicemailPeriodInSeconds)
 		)
 		self._voicemailsStateMachine.set_state_strategy(
 			state_machine.StateMachine.STATE_ACTIVE,
-			state_machine.ConstantStateStrategy(state_machine.to_milliseconds(minutes=10))
+			state_machine.NTimesStateStrategy(
+				3 * [state_machine.to_seconds(minutes=1)], voicemailPeriodInSeconds
+			)
 		)
 		self._voicemails.updateSignalHandler.register_sink(
 			self._voicemailsStateMachine.request_reset_timers
 		)
 
+		if defaults["texts"][0] == state_machine.UpdateStateMachine.INFINITE_PERIOD:
+			initTextsPeriodInSeconds = state_machine.UpdateStateMachine.INFINITE_PERIOD
+			minTextsPeriodInSeconds = state_machine.UpdateStateMachine.INFINITE_PERIOD
+			textsPeriodInSeconds = state_machine.UpdateStateMachine.INFINITE_PERIOD
+			idleTextsPeriodInSeconds = state_machine.UpdateStateMachine.INFINITE_PERIOD
+		else:
+			initTextsPeriodInSeconds = state_machine.to_seconds(seconds=20)
+			minTextsPeriodInSeconds = state_machine.to_seconds(seconds=1)
+			textsPeriodInSeconds = state_machine.to_seconds(
+				**{defaults["texts"][1]: defaults["texts"][0],}
+			)
+			idleTextsPeriodInSeconds = max(textsPeriodInSeconds * 4, self._MINIMUM_MESSAGE_PERIOD)
 		self._texts = conversations.Conversations(self._backend.get_texts)
 		self._textsStateMachine = state_machine.UpdateStateMachine([self.texts], "Texting")
 		self._textsStateMachine.set_state_strategy(
@@ -60,14 +106,14 @@ class Session(object):
 		)
 		self._textsStateMachine.set_state_strategy(
 			state_machine.StateMachine.STATE_IDLE,
-			state_machine.ConstantStateStrategy(state_machine.to_milliseconds(minutes=30))
+			state_machine.ConstantStateStrategy(idleTextsPeriodInSeconds)
 		)
 		self._textsStateMachine.set_state_strategy(
 			state_machine.StateMachine.STATE_ACTIVE,
 			state_machine.GeometricStateStrategy(
-				state_machine.to_milliseconds(seconds=20),
-				state_machine.to_milliseconds(milliseconds=500),
-				state_machine.to_milliseconds(minutes=10),
+				initTextsPeriodInSeconds,
+				minTextsPeriodInSeconds,
+				textsPeriodInSeconds,
 			)
 		)
 		self._texts.updateSignalHandler.register_sink(
@@ -78,6 +124,17 @@ class Session(object):
 		self._masterStateMachine.append_machine(self._addressbookStateMachine)
 		self._masterStateMachine.append_machine(self._voicemailsStateMachine)
 		self._masterStateMachine.append_machine(self._textsStateMachine)
+
+		self._lastDndCheck = 0
+		self._cachedIsDnd = False
+
+	def load(self, path):
+		self._texts.load(os.sep.join((path, "texts.cache")))
+		self._voicemails.load(os.sep.join((path, "voicemails.cache")))
+
+	def save(self, path):
+		self._texts.save(os.sep.join((path, "texts.cache")))
+		self._voicemails.save(os.sep.join((path, "voicemails.cache")))
 
 	def close(self):
 		self._voicemails.updateSignalHandler.unregister_sink(
@@ -120,6 +177,18 @@ class Session(object):
 				_moduleLogger.info("Login failed")
 				self.logout()
 				return False
+
+	def set_dnd(self, doNotDisturb):
+		self._backend.set_dnd(doNotDisturb)
+		self._cachedIsDnd = doNotDisturb
+
+	def is_dnd(self):
+		# To throttle checking with the server, use a 30s cache
+		newTime = time.time()
+		if self._lastDndCheck + 30 < newTime:
+			self._lastDndCheck = newTime
+			self._cachedIsDnd = self._backend.is_dnd()
+		return self._cachedIsDnd
 
 	@property
 	def backend(self):

@@ -1,111 +1,150 @@
-
-"""
-@todo Add params for different state machines update times
-@todo Add option to use screen name as callback
-@todo Get a callback for missed calls to force an update of the voicemail state machine
-@todo Get a callback on an incoming call and if its from GV, auto-pickup
-"""
-
-
+import os
 import weakref
 import logging
 
 import telepathy
 
-try:
-	import conic as _conic
-	conic = _conic
-except (ImportError, OSError):
-	conic = None
-
 import constants
 import tp
-import util.coroutines as coroutines
-import gtk_toolbox
+import util.go_utils as gobject_utils
+import util.misc as misc_utils
 
 import gvoice
 import handle
 
-import requests
-import contacts
 import aliasing
-import simple_presence
-import presence
+import avatars
 import capabilities
+import contacts
+import presence
+import requests
+import simple_presence
 
+import autogv
 import channel_manager
 
 
-_moduleLogger = logging.getLogger("connection")
+_moduleLogger = logging.getLogger(__name__)
+
+
+class TheOneRingOptions(object):
+
+	useGVContacts = True
+
+	assert gvoice.session.Session._DEFAULTS["contacts"][1] == "hours"
+	contactsPollPeriodInHours = gvoice.session.Session._DEFAULTS["contacts"][0]
+
+	assert gvoice.session.Session._DEFAULTS["voicemail"][1] == "minutes"
+	voicemailPollPeriodInMinutes = gvoice.session.Session._DEFAULTS["voicemail"][0]
+
+	assert gvoice.session.Session._DEFAULTS["texts"][1] == "minutes"
+	textsPollPeriodInMinutes = gvoice.session.Session._DEFAULTS["texts"][0]
+
+	def __init__(self, parameters = None):
+		if parameters is None:
+			return
+		self.useGVContacts = parameters["use-gv-contacts"]
+		self.contactsPollPeriodInHours = parameters['contacts-poll-period-in-hours']
+		self.voicemailPollPeriodInMinutes = parameters['voicemail-poll-period-in-minutes']
+		self.textsPollPeriodInMinutes = parameters['texts-poll-period-in-minutes']
 
 
 class BluewireConnection(
 	tp.Connection,
-	requests.RequestsMixin,
-	contacts.ContactsMixin,
 	aliasing.AliasingMixin,
-	simple_presence.SimplePresenceMixin,
-	presence.PresenceMixin,
+	avatars.AvatarsMixin,
 	capabilities.CapabilitiesMixin,
+	contacts.ContactsMixin,
+	presence.PresenceMixin,
+	requests.RequestsMixin,
+	simple_presence.SimplePresenceMixin,
 ):
 
-	# Overriding a base class variable
-	# Should the forwarding number be handled by the alias or by an option?
+	# overiding base class variable
 	_mandatory_parameters = {
-		'account' : 's',
-		'password' : 's',
-		'forward' : 's',
+		'account': 's',
+		'password': 's',
 	}
-	# Overriding a base class variable
+	# overiding base class variable
 	_optional_parameters = {
+		'forward': 's',
+		'use-gv-contacts': 'b',
+		'contacts-poll-period-in-hours': 'i',
+		'voicemail-poll-period-in-minutes': 'i',
+		'texts-poll-period-in-minutes': 'i',
 	}
 	_parameter_defaults = {
+		'forward': '',
+		'use-gv-contacts': TheOneRingOptions.useGVContacts,
+		'contacts-poll-period-in-hours': TheOneRingOptions.contactsPollPeriodInHours,
+		'voicemail-poll-period-in-minutes': TheOneRingOptions.voicemailPollPeriodInMinutes,
+		'texts-poll-period-in-minutes': TheOneRingOptions.textsPollPeriodInMinutes,
 	}
+	_secret_parameters = set((
+		"password",
+	))
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def __init__(self, manager, parameters):
 		self.check_parameters(parameters)
 		account = unicode(parameters['account'])
 		encodedAccount = parameters['account'].encode('utf-8')
 		encodedPassword = parameters['password'].encode('utf-8')
-		encodedCallback = parameters['forward'].encode('utf-8')
-		if not encodedCallback:
-			raise telepathy.errors.InvalidArgument("User must specify what number GV forwards calls to")
+		encodedCallback = misc_utils.normalize_number(parameters['forward'].encode('utf-8'))
+		if encodedCallback and not misc_utils.is_valid_number(encodedCallback):
+			raise telepathy.errors.InvalidArgument("Invalid forwarding number")
 
 		# Connection init must come first
+		self.__options = TheOneRingOptions(parameters)
+		self.__session = gvoice.session.Session(
+			cookiePath = None,
+			defaults = {
+				"contacts": (self.__options.contactsPollPeriodInHours, "hours"),
+				"voicemail": (self.__options.voicemailPollPeriodInMinutes, "minutes"),
+				"texts": (self.__options.textsPollPeriodInMinutes, "minutes"),
+			},
+		)
 		tp.Connection.__init__(
 			self,
 			constants._telepathy_protocol_name_,
 			account,
 			constants._telepathy_implementation_name_
 		)
-		requests.RequestsMixin.__init__(self)
-		contacts.ContactsMixin.__init__(self)
 		aliasing.AliasingMixin.__init__(self)
-		simple_presence.SimplePresenceMixin.__init__(self)
-		presence.PresenceMixin.__init__(self)
+		avatars.AvatarsMixin.__init__(self)
 		capabilities.CapabilitiesMixin.__init__(self)
+		contacts.ContactsMixin.__init__(self)
+		presence.PresenceMixin.__init__(self)
+		requests.RequestsMixin.__init__(self)
+		simple_presence.SimplePresenceMixin.__init__(self)
 
 		self.__manager = weakref.proxy(manager)
 		self.__credentials = (
 			encodedAccount,
 			encodedPassword,
 		)
-		self.__callbackNumber = encodedCallback
+		self.__callbackNumberParameter = encodedCallback
 		self.__channelManager = channel_manager.ChannelManager(self)
 
-		self.__session = gvoice.session.Session(None)
-		if conic is not None:
-			self.__connection = conic.Connection()
-			self.__connectionEventId = None
-		else:
-			self.__connection = None
-			self.__connectionEventId = None
+		self.__cachePath = os.sep.join((constants._data_path_, "cache", self.username))
+		try:
+			os.makedirs(self.__cachePath)
+		except OSError, e:
+			if e.errno != 17:
+				raise
 
 		self.set_self_handle(handle.create_handle(self, 'connection'))
+		self._plumbing = [
+			autogv.NewGVConversations(weakref.ref(self)),
+			autogv.RefreshVoicemail(weakref.ref(self)),
+			autogv.AutoDisconnect(weakref.ref(self)),
+			autogv.DelayEnableContactIntegration(constants._telepathy_implementation_name_),
+		]
+		self._delayedConnect = gobject_utils.Async(self._delayed_connect)
 
-		self.__callback = None
 		_moduleLogger.info("Connection to the account %s created" % account)
+		self._timedDisconnect = autogv.TimedDisconnect(weakref.ref(self))
+		self._timedDisconnect.start()
 
 	@property
 	def manager(self):
@@ -116,24 +155,23 @@ class BluewireConnection(
 		return self.__session
 
 	@property
+	def options(self):
+		return self.__options
+
+	@property
 	def username(self):
 		return self.__credentials[0]
 
 	@property
-	def userAliasType(self):
-		return self.USER_ALIAS_ACCOUNT
+	def callbackNumberParameter(self):
+		return self.__callbackNumberParameter
 
 	def get_handle_by_name(self, handleType, handleName):
 		requestedHandleName = handleName.encode('utf-8')
 		if handleType == telepathy.HANDLE_TYPE_CONTACT:
-			_moduleLogger.info("RequestHandles Contact: %s" % requestedHandleName)
-			requestedContactId, requestedContactNumber = handle.ContactHandle.from_handle_name(
-				requestedHandleName
-			)
-			h = handle.create_handle(self, 'contact', requestedContactId, requestedContactNumber)
+			h = handle.create_handle(self, 'contact', requestedHandleName)
 		elif handleType == telepathy.HANDLE_TYPE_LIST:
 			# Support only server side (immutable) lists
-			_moduleLogger.info("RequestHandles List: %s" % requestedHandleName)
 			h = handle.create_handle(self, 'list', requestedHandleName)
 		else:
 			raise telepathy.errors.NotAvailable('Handle type unsupported %d' % handleType)
@@ -143,46 +181,51 @@ class BluewireConnection(
 	def _channel_manager(self):
 		return self.__channelManager
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def Connect(self):
 		"""
 		For org.freedesktop.telepathy.Connection
 		"""
+		if self._status != telepathy.CONNECTION_STATUS_DISCONNECTED:
+			_moduleLogger.info("Attempting connect when not disconnected")
+			return
+		_moduleLogger.info("Kicking off connect")
+		self._delayedConnect.start()
+		self._timedDisconnect.stop()
+
+	@misc_utils.log_exception(_moduleLogger)
+	def _delayed_connect(self):
 		_moduleLogger.info("Connecting...")
 		self.StatusChanged(
 			telepathy.CONNECTION_STATUS_CONNECTING,
 			telepathy.CONNECTION_STATUS_REASON_REQUESTED
 		)
 		try:
-			cookieFilePath = None
-			self.__session = gvoice.session.Session(cookieFilePath)
+			self.__session.load(self.__cachePath)
 
-			self.__callback = coroutines.func_sink(
-				coroutines.expand_positional(
-					self._on_conversations_updated
-				)
-			)
-			self.session.voicemails.updateSignalHandler.register_sink(
-				self.__callback
-			)
-			self.session.texts.updateSignalHandler.register_sink(
-				self.__callback
-			)
+			for plumber in self._plumbing:
+				plumber.start()
 			self.session.login(*self.__credentials)
-			self.session.backend.set_callback_number(self.__callbackNumber)
-		except gvoice.backend.NetworkError, e:
+			if not self.__callbackNumberParameter:
+				callback = gvoice.backend.get_sane_callback(
+					self.session.backend
+				)
+				self.__callbackNumberParameter = misc_utils.normalize_number(callback)
+			self.session.backend.set_callback_number(self.__callbackNumberParameter)
+
+			subscribeHandle = self.get_handle_by_name(telepathy.HANDLE_TYPE_LIST, "subscribe")
+			subscribeProps = self.generate_props(telepathy.CHANNEL_TYPE_CONTACT_LIST, subscribeHandle, False)
+			self.__channelManager.channel_for_props(subscribeProps, signal=True)
+			publishHandle = self.get_handle_by_name(telepathy.HANDLE_TYPE_LIST, "publish")
+			publishProps = self.generate_props(telepathy.CHANNEL_TYPE_CONTACT_LIST, publishHandle, False)
+			self.__channelManager.channel_for_props(publishProps, signal=True)
+		except gvoice.backend.NetworkError:
 			_moduleLogger.exception("Connection Failed")
-			self.StatusChanged(
-				telepathy.CONNECTION_STATUS_DISCONNECTED,
-				telepathy.CONNECTION_STATUS_REASON_NETWORK_ERROR
-			)
+			self.disconnect(telepathy.CONNECTION_STATUS_REASON_NETWORK_ERROR)
 			return
-		except Exception, e:
+		except Exception:
 			_moduleLogger.exception("Connection Failed")
-			self.StatusChanged(
-				telepathy.CONNECTION_STATUS_DISCONNECTED,
-				telepathy.CONNECTION_STATUS_REASON_AUTHENTICATION_FAILED
-			)
+			self.disconnect(telepathy.CONNECTION_STATUS_REASON_AUTHENTICATION_FAILED)
 			return
 
 		_moduleLogger.info("Connected")
@@ -190,24 +233,16 @@ class BluewireConnection(
 			telepathy.CONNECTION_STATUS_CONNECTED,
 			telepathy.CONNECTION_STATUS_REASON_REQUESTED
 		)
-		if self.__connection is not None:
-			self.__connectionEventId = self.__connection.connect("connection-event", self._on_connection_change)
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def Disconnect(self):
 		"""
 		For org.freedesktop.telepathy.Connection
 		"""
-		self.StatusChanged(
-			telepathy.CONNECTION_STATUS_DISCONNECTED,
-			telepathy.CONNECTION_STATUS_REASON_REQUESTED
-		)
-		try:
-			self._disconnect()
-		except Exception:
-			_moduleLogger.exception("Error durring disconnect")
+		_moduleLogger.info("Kicking off disconnect")
+		self.disconnect(telepathy.CONNECTION_STATUS_REASON_REQUESTED)
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def RequestChannel(self, type, handleType, handleId, suppressHandler):
 		"""
 		For org.freedesktop.telepathy.Connection
@@ -221,17 +256,17 @@ class BluewireConnection(
 		self.check_handle(handleType, handleId)
 
 		h = self.get_handle_by_id(handleType, handleId) if handleId != 0 else None
-		props = self._generate_props(type, h, suppressHandler)
+		props = self.generate_props(type, h, suppressHandler)
 		self._validate_handle(props)
 
 		chan = self.__channelManager.channel_for_props(props, signal=True)
 		path = chan._object_path
-		_moduleLogger.info("RequestChannel Object Path: %s" % path)
+		_moduleLogger.info("RequestChannel Object Path (%s): %s" % (type.rsplit(".", 1)[-1], path))
 		return path
 
-	def _generate_props(self, channelType, handle, suppressHandler, initiatorHandle=None):
-		targetHandle = 0 if handle is None else handle.get_id()
-		targetHandleType = telepathy.HANDLE_TYPE_NONE if handle is None else handle.get_type()
+	def generate_props(self, channelType, handleObj, suppressHandler, initiatorHandle=None):
+		targetHandle = 0 if handleObj is None else handleObj.get_id()
+		targetHandleType = telepathy.HANDLE_TYPE_NONE if handleObj is None else handleObj.get_type()
 		props = {
 			telepathy.CHANNEL_INTERFACE + '.ChannelType': channelType,
 			telepathy.CHANNEL_INTERFACE + '.TargetHandle': targetHandle,
@@ -244,53 +279,32 @@ class BluewireConnection(
 
 		return props
 
-	def _disconnect(self):
+	def disconnect(self, reason):
 		_moduleLogger.info("Disconnecting")
-		self.session.voicemails.updateSignalHandler.unregister_sink(
-			self.__callback
+
+		self._delayedConnect.cancel()
+		self._timedDisconnect.stop()
+
+		# Not having the disconnect first can cause weird behavior with clients
+		# including not being able to reconnect or even crashing
+		self.StatusChanged(
+			telepathy.CONNECTION_STATUS_DISCONNECTED,
+			reason,
 		)
-		self.session.texts.updateSignalHandler.unregister_sink(
-			self.__callback
-		)
-		self.__callback = None
+
+		for plumber in self._plumbing:
+			plumber.stop()
 
 		self.__channelManager.close()
+		self.manager.disconnected(self)
+
+		self.session.save(self.__cachePath)
 		self.session.logout()
 		self.session.close()
-		self.__session = None
-		if self.__connection is not None:
-			self.__connection.disconnect(self.__connectionEventId)
-			self.__connectionEventId = None
 
-		self.manager.disconnected(self)
+		# In case one of the above items takes too long (which it should never
+		# do), we leave the starting of the shutdown-on-idle counter to the
+		# very end
+		self.manager.disconnect_completed()
+
 		_moduleLogger.info("Disconnected")
-
-	@gtk_toolbox.log_exception(_moduleLogger)
-	def _on_conversations_updated(self, conv, conversationIds):
-		_moduleLogger.debug("Incoming messages from: %r" % (conversationIds, ))
-		for contactId, phoneNumber in conversationIds:
-			h = handle.create_handle(self, 'contact', contactId, phoneNumber)
-			# Just let the TextChannel decide whether it should be reported to the user or not
-			props = self._generate_props(telepathy.CHANNEL_TYPE_TEXT, h, False)
-			channel = self.__channelManager.channel_for_props(props, signal=True)
-
-	@gtk_toolbox.log_exception(_moduleLogger)
-	def _on_connection_change(self, connection, event):
-		"""
-		@note Maemo specific
-		"""
-		status = event.get_status()
-		error = event.get_error()
-		iap_id = event.get_iap_id()
-		bearer = event.get_bearer_type()
-
-		if status == conic.STATUS_DISCONNECTED:
-			_moduleLogger.info("Disconnecting due to loss of network connection")
-			self.StatusChanged(
-				telepathy.CONNECTION_STATUS_DISCONNECTED,
-				telepathy.CONNECTION_STATUS_REASON_NETWORK_ERROR
-			)
-			try:
-				self._disconnect()
-			except Exception:
-				_moduleLogger.exception("Error durring disconnect")

@@ -1,26 +1,20 @@
-"""
-Empathy Experience:
-	Can't call
-	When first started, reports all read conversations when some might have been read
-	When first started, reports all of an SMS conversation even though some has been reported previously
-	Still leaking one of two contact lists
-"""
-
 import logging
 
-import gobject
 import telepathy
 
 import constants
 import tp
-import gtk_toolbox
+import util.go_utils as gobject_utils
+import util.misc as misc_utils
 import connection
 
 
-_moduleLogger = logging.getLogger("connection_manager")
+_moduleLogger = logging.getLogger(__name__)
 
 
 class BluewireConnectionManager(tp.ConnectionManager):
+
+	IDLE_TIMEOUT = 10
 
 	def __init__(self, shutdown_func=None):
 		tp.ConnectionManager.__init__(self, constants._telepathy_implementation_name_)
@@ -30,7 +24,7 @@ class BluewireConnectionManager(tp.ConnectionManager):
 		self._on_shutdown = shutdown_func
 		_moduleLogger.info("Connection manager created")
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def GetParameters(self, proto):
 		"""
 		For org.freedesktop.telepathy.ConnectionManager
@@ -45,54 +39,40 @@ class BluewireConnectionManager(tp.ConnectionManager):
 		mandatoryParameters = ConnectionClass._mandatory_parameters
 		optionalParameters = ConnectionClass._optional_parameters
 		defaultParameters = ConnectionClass._parameter_defaults
+		secretParameters = ConnectionClass._secret_parameters
 
 		for parameterName, parameterType in mandatoryParameters.iteritems():
 			flags = telepathy.CONN_MGR_PARAM_FLAG_REQUIRED
-			if parameterName == "password":
+			if parameterName in secretParameters:
 				flags |= telepathy.CONN_MGR_PARAM_FLAG_SECRET
-			param = (
-				parameterName,
-				flags,
-				parameterType,
-				'',
-			)
+			param = (parameterName, flags, parameterType, "")
 			result.append(param)
 
 		for parameterName, parameterType in optionalParameters.iteritems():
+			flags = 0
+			default = ""
+			if parameterName in secretParameters:
+				flags |= telepathy.CONN_MGR_PARAM_FLAG_SECRET
 			if parameterName in defaultParameters:
-				flags = telepathy.CONN_MGR_PARAM_FLAG_HAS_DEFAULT
-				if parameterName == "password":
-					flags |= telepathy.CONN_MGR_PARAM_FLAG_SECRET
+				flags |= telepathy.CONN_MGR_PARAM_FLAG_HAS_DEFAULT
 				default = defaultParameters[parameterName]
-			else:
-				flags = 0
-				default = ""
-			param = (
-				parameterName,
-				flags,
-				parameterName,
-				default,
-			)
+			param = (parameterName, flags, parameterType, default)
 			result.append(param)
 
 		return result
 
-	def disconnected(self, conn):
-		"""
-		Overrides tp.ConnectionManager
-		"""
-		result = tp.ConnectionManager.disconnected(self, conn)
-		gobject.timeout_add(5000, self._shutdown)
+	def disconnect_completed(self):
+		gobject_utils.timeout_add_seconds(self.IDLE_TIMEOUT, self._shutdown)
 
 	def quit(self):
 		"""
 		Terminates all connections. Must be called upon quit
 		"""
-		for connection in self._connections:
-			connection.Disconnect()
+		for conn in self._connections:
+			conn.Disconnect()
 		_moduleLogger.info("Connection manager quitting")
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def _shutdown(self):
 		if (
 			self._on_shutdown is not None and

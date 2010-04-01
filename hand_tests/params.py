@@ -39,7 +39,7 @@ if __name__ == "__main__":
 	cm = reg.GetManager('bluewire')
 
 	# get the parameters required to make a Jabber connection
-	cm[CONN_MGR_INTERFACE].GetParameters('sip',
+	cm[CONN_MGR_INTERFACE].GetParameters('bluetooth',
 		reply_handler = print_params, error_handler = error_cb)
 
 	loop = gobject.MainLoop()

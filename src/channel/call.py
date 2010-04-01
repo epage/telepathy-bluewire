@@ -1,32 +1,71 @@
 import logging
 
-import gobject
+import dbus
 import telepathy
 
 import tp
-import gtk_toolbox
-import handle
+import util.go_utils as gobject_utils
+import util.misc as misc_utils
 
 
-_moduleLogger = logging.getLogger("channel.call")
+_moduleLogger = logging.getLogger(__name__)
 
 
 class CallChannel(
 		tp.ChannelTypeStreamedMedia,
-		tp.ChannelInterfaceCallState,
 		tp.ChannelInterfaceGroup,
+		tp.ChannelInterfaceCallState,
+		tp.ChannelInterfaceHold,
 	):
-	# @bug On Maemo 5 this is having some kind of "General" error, possibly due to an issue with "GetAll" DBusProperties stuff
 
 	def __init__(self, connection, manager, props, contactHandle):
 		self.__manager = manager
 		self.__props = props
-		self.__cancelId = None
+		self._delayedClose = gobject_utils.Timeout(self._on_close_requested)
+
+		if telepathy.interfaces.CHANNEL_INTERFACE + '.InitiatorHandle' in props:
+			self._initiator = connection.get_handle_by_id(
+				telepathy.HANDLE_TYPE_CONTACT,
+				props[telepathy.interfaces.CHANNEL_INTERFACE + '.InitiatorHandle'],
+			)
+		elif telepathy.interfaces.CHANNEL_INTERFACE + '.InitiatorID' in props:
+			self._initiator = connection.get_handle_by_name(
+				telepathy.HANDLE_TYPE_CONTACT,
+				props[telepathy.interfaces.CHANNEL_INTERFACE + '.InitiatorHandle'],
+			)
+		else:
+			# Maemo 5 seems to require InitiatorHandle/InitiatorID to be set
+			# even though I can't find them in the dbus spec.  I think its
+			# generally safe to assume that its locally initiated if not
+			# specified.  Specially for The One Ring, its always locally
+			# initiated
+			_moduleLogger.warning('InitiatorID or InitiatorHandle not set on new channel, assuming locally initiated')
+			self._initiator = connection.GetSelfHandle()
 
 		tp.ChannelTypeStreamedMedia.__init__(self, connection, manager, props)
-		tp.ChannelInterfaceCallState.__init__(self)
 		tp.ChannelInterfaceGroup.__init__(self)
+		tp.ChannelInterfaceCallState.__init__(self)
+		tp.ChannelInterfaceHold.__init__(self)
 		self.__contactHandle = contactHandle
+		self.__calledNumber = None
+
+		self._implement_property_get(
+			telepathy.interfaces.CHANNEL_INTERFACE,
+			{
+				'InitiatorHandle': lambda: dbus.UInt32(self._initiator.id),
+				'InitiatorID': lambda: self._initiator.name,
+			},
+		)
+		self._add_immutables({
+			'InitiatorHandle': telepathy.interfaces.CHANNEL_INTERFACE,
+			'InitiatorID': telepathy.interfaces.CHANNEL_INTERFACE,
+		})
+		self._implement_property_get(
+			telepathy.interfaces.CHANNEL_INTERFACE_GROUP,
+			{
+				'LocalPendingMembers': lambda: self.GetLocalPendingMembersWithInfo()
+			},
+		)
 		self._implement_property_get(
 			telepathy.interfaces.CHANNEL_TYPE_STREAMED_MEDIA,
 			{
@@ -34,10 +73,16 @@ class CallChannel(
 				"InitialVideo": self.initial_video,
 			},
 		)
+		self._add_immutables({
+			'InitialAudio': telepathy.interfaces.CHANNEL_TYPE_STREAMED_MEDIA,
+			'InitialVideo': telepathy.interfaces.CHANNEL_TYPE_STREAMED_MEDIA,
+		})
 
 		self.GroupFlagsChanged(0, 0)
+		added, removed = [self._conn.GetSelfHandle()], []
+		localPending, remotePending = [], [contactHandle]
 		self.MembersChanged(
-			'', [self._conn.GetSelfHandle()], [], [], [contactHandle],
+			'', added, removed, localPending, remotePending,
 			0, telepathy.CHANNEL_GROUP_CHANGE_REASON_NONE
 		)
 
@@ -47,32 +92,58 @@ class CallChannel(
 	def initial_video(self):
 		return False
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def Close(self):
 		self.close()
 
 	def close(self):
+		_moduleLogger.debug("Closing call")
+		self._delayedClose.cancel()
+
 		tp.ChannelTypeStreamedMedia.Close(self)
 		self.remove_from_connection()
-		if self.__cancelId is not None:
-			gobject.source_remove(self.__cancelId)
-			self.__cancelId = None
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+		if self.__calledNumber is not None:
+			_moduleLogger.debug("Cancelling call")
+			self._conn.session.backend.cancel(self.__calledNumber)
+
+	@misc_utils.log_exception(_moduleLogger)
+	def GetLocalPendingMembersWithInfo(self):
+		info = dbus.Array([], signature="(uuus)")
+		for member in self._local_pending:
+			info.append((member, self._handle, 0, ''))
+		return info
+
+	@misc_utils.log_exception(_moduleLogger)
+	def AddMembers(self, handles, message):
+		_moduleLogger.info("Add members %r: %s" % (handles, message))
+		for handle in handles:
+			if handle == int(self.GetSelfHandle()) and self.GetSelfHandle() in self._local_pending:
+				_moduleLogger.info("Technically the user just accepted the call")
+
+	@misc_utils.log_exception(_moduleLogger)
+	def RemoveMembers(self, handles, message):
+		_moduleLogger.info("Remove members (no-op) %r: %s" % (handles, message))
+
+	@misc_utils.log_exception(_moduleLogger)
+	def RemoveMembersWithReason(self, handles, message, reason):
+		_moduleLogger.info("Remove members (no-op) %r: %s (%i)" % (handles, message, reason))
+
+	@misc_utils.log_exception(_moduleLogger)
 	def ListStreams(self):
 		"""
 		For org.freedesktop.Telepathy.Channel.Type.StreamedMedia
 		"""
 		return ()
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def RemoveStreams(self, streams):
 		"""
 		For org.freedesktop.Telepathy.Channel.Type.StreamedMedia
 		"""
 		raise telepathy.errors.NotImplemented("Cannot remove a stream")
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def RequestStreamDirection(self, stream, streamDirection):
 		"""
 		For org.freedesktop.Telepathy.Channel.Type.StreamedMedia
@@ -82,7 +153,7 @@ class CallChannel(
 		_moduleLogger.info("A request was made to change the stream direction")
 		raise telepathy.errors.NotImplemented("Cannot change directions")
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def RequestStreams(self, contactId, streamTypes):
 		"""
 		For org.freedesktop.Telepathy.Channel.Type.StreamedMedia
@@ -91,19 +162,21 @@ class CallChannel(
 		"""
 		contact = self._conn.get_handle_by_id(telepathy.constants.HANDLE_TYPE_CONTACT, contactId)
 		assert self.__contactHandle == contact, "%r != %r" % (self.__contactHandle, contact)
-		contactId, contactNumber = handle.ContactHandle.from_handle_name(contact.name)
+		contactNumber = contact.phoneNumber
 
+		self.__calledNumber = contactNumber
 		self.CallStateChanged(self.__contactHandle, telepathy.constants.CHANNEL_CALL_STATE_RINGING)
-		self.__cancelId = gobject.idle_add(self._on_cancel)
 		self._conn.session.backend.call(contactNumber)
+		self._delayedClose.start(seconds=0)
+		self.CallStateChanged(self.__contactHandle, telepathy.constants.CHANNEL_CALL_STATE_FORWARDED)
 
 		streamId = 0
-		streamState = telepathy.constants.MEDIA_STREAM_STATE_DISCONNECTED
+		streamState = telepathy.constants.MEDIA_STREAM_STATE_CONNECTED
 		streamDirection = telepathy.constants.MEDIA_STREAM_DIRECTION_BIDIRECTIONAL
 		pendingSendFlags = telepathy.constants.MEDIA_STREAM_PENDING_REMOTE_SEND
 		return [(streamId, contact, streamTypes[0], streamState, streamDirection, pendingSendFlags)]
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def GetCallStates(self):
 		"""
 		For org.freedesktop.Telepathy.Channel.Interface.CallState
@@ -113,9 +186,32 @@ class CallChannel(
 		"""
 		return {self.__contactHandle: telepathy.constants.CHANNEL_CALL_STATE_FORWARDED}
 
-	@gtk_toolbox.log_exception(_moduleLogger)
-	def _on_cancel(self, *args):
-		self.CallStateChanged(self.__contactHandle, telepathy.constants.CHANNEL_CALL_STATE_FORWARDED)
+	@misc_utils.log_exception(_moduleLogger)
+	def GetHoldState(self):
+		"""
+		For org.freedesktop.Telepathy.Channel.Interface.Hold
+
+		Get the current hold state
+		@returns (HoldState, Reason)
+		"""
+		return (
+			telepathy.constants.LOCAL_HOLD_STATE_UNHELD,
+			telepathy.constants.LOCAL_HOLD_STATE_REASON_NONE,
+		)
+
+	@misc_utils.log_exception(_moduleLogger)
+	def RequestHold(self, Hold):
+		"""
+		For org.freedesktop.Telepathy.Channel.Interface.Hold
+		"""
+		if not Hold:
+			return
+		_moduleLogger.debug("Closing without cancel to get out of users way")
+		self.__calledNumber = None
 		self.close()
-		self.__cancelId = None
-		return False
+
+	@misc_utils.log_exception(_moduleLogger)
+	def _on_close_requested(self, *args):
+		_moduleLogger.debug("Cancel now disallowed")
+		self.__calledNumber = None
+		self.close()

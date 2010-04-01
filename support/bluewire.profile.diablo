@@ -1,6 +1,6 @@
 [Profile]
 Manager=bluewire
-Protocol=sip
+Protocol=bluetooth
 DisplayName=Bluetooth
 IconName = im-bluewire
 ConfigurationUI = haze-plugin

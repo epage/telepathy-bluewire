@@ -1,3 +1,6 @@
+from __future__ import with_statement
+
+import os
 import cmd
 import StringIO
 import time
@@ -6,17 +9,16 @@ import logging
 
 import telepathy
 
+import constants
 import tp
-import gtk_toolbox
+import util.misc as misc_utils
+import gvoice
 
 
-_moduleLogger = logging.getLogger("channel.text")
+_moduleLogger = logging.getLogger(__name__)
 
 
 class DebugPromptChannel(tp.ChannelTypeText, cmd.Cmd):
-	"""
-	Look into implementing ChannelInterfaceMessages for rich text formatting
-	"""
 
 	def __init__(self, connection, manager, props, contactHandle):
 		self.__manager = manager
@@ -30,7 +32,7 @@ class DebugPromptChannel(tp.ChannelTypeText, cmd.Cmd):
 
 		self.__otherHandle = contactHandle
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def Send(self, messageType, text):
 		if messageType != telepathy.CHANNEL_TEXT_MESSAGE_TYPE_NORMAL:
 			raise telepathy.errors.NotImplemented("Unhandled message type: %r" % messageType)
@@ -45,13 +47,16 @@ class DebugPromptChannel(tp.ChannelTypeText, cmd.Cmd):
 		finally:
 			self.stdin, self.stdout = oldStdin, oldStdout
 
-		self._report_new_message(currentStdout.getvalue())
+		stdoutData = currentStdout.getvalue().strip()
+		if stdoutData:
+			self._report_new_message(stdoutData)
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def Close(self):
 		self.close()
 
 	def close(self):
+		_moduleLogger.debug("Closing debug")
 		tp.ChannelTypeText.Close(self)
 		self.remove_from_connection()
 
@@ -66,15 +71,32 @@ class DebugPromptChannel(tp.ChannelTypeText, cmd.Cmd):
 		self.__nextRecievedId += 1
 
 	def do_reset_state_machine(self, args):
-		if args:
-			self._report_new_message("No arguments supported")
-			return
-
 		try:
-			for machine in self._conn.session.stateMachine._machines:
-				machine.reset_timers()
+			args = args.strip().lower()
+			if not args:
+				args  = "all"
+			if args == "all":
+				for machine in self._conn.session.stateMachine._machines:
+					machine.reset_timers()
+			elif args == "contacts":
+				self._conn.session.addressbookStateMachine.reset_timers()
+			elif args == "voicemail":
+				self._conn.session.voicemailsStateMachine.reset_timers()
+			elif args == "texts":
+				self._conn.session.textsStateMachine.reset_timers()
+			else:
+				self._report_new_message('Unknown machine "%s"' % (args, ))
 		except Exception, e:
 			self._report_new_message(str(e))
+
+	def help_reset_state_machine(self):
+		self._report_new_message("""Reset the refreshing state machine.
+"reset_state_machine" - resets all
+"reset_state_machine all"
+"reset_state_machine contacts"
+"reset_state_machine voicemail"
+"reset_state_machine texts"
+""")
 
 	def do_get_state(self, args):
 		if args:
@@ -87,6 +109,43 @@ class DebugPromptChannel(tp.ChannelTypeText, cmd.Cmd):
 		except Exception, e:
 			self._report_new_message(str(e))
 
+	def help_get_state(self):
+		self._report_new_message("Print the current state the refreshing state machine is in")
+
+	def do_get_polling(self, args):
+		if args:
+			self._report_new_message("No arguments supported")
+			return
+		self._report_new_message("\n".join((
+			"Contacts:", repr(self._conn.session.addressbookStateMachine)
+		)))
+		self._report_new_message("\n".join((
+			"Voicemail:", repr(self._conn.session.voicemailsStateMachine)
+		)))
+		self._report_new_message("\n".join((
+			"Texts:", repr(self._conn.session.textsStateMachine)
+		)))
+
+	def help_get_polling(self):
+		self._report_new_message("Prints the frequency each of the state machines updates")
+
+	def do_get_state_status(self, args):
+		if args:
+			self._report_new_message("No arguments supported")
+			return
+		self._report_new_message("\n".join((
+			"Contacts:", str(self._conn.session.addressbookStateMachine)
+		)))
+		self._report_new_message("\n".join((
+			"Voicemail:", str(self._conn.session.voicemailsStateMachine)
+		)))
+		self._report_new_message("\n".join((
+			"Texts:", str(self._conn.session.textsStateMachine)
+		)))
+
+	def help_get_state_status(self):
+		self._report_new_message("Prints the current setting for the state machines")
+
 	def do_is_authed(self, args):
 		if args:
 			self._report_new_message("No arguments supported")
@@ -97,6 +156,9 @@ class DebugPromptChannel(tp.ChannelTypeText, cmd.Cmd):
 			self._report_new_message(str(isAuthed))
 		except Exception, e:
 			self._report_new_message(str(e))
+
+	def help_is_authed(self):
+		self._report_new_message("Print whether logged in to Google Voice")
 
 	def do_is_dnd(self, args):
 		if args:
@@ -109,6 +171,9 @@ class DebugPromptChannel(tp.ChannelTypeText, cmd.Cmd):
 		except Exception, e:
 			self._report_new_message(str(e))
 
+	def help_is_dnd(self):
+		self._report_new_message("Print whether Do-Not-Disturb mode enabled on the Google Voice account")
+
 	def do_get_account_number(self, args):
 		if args:
 			self._report_new_message("No arguments supported")
@@ -119,6 +184,9 @@ class DebugPromptChannel(tp.ChannelTypeText, cmd.Cmd):
 			self._report_new_message(number)
 		except Exception, e:
 			self._report_new_message(str(e))
+
+	def help_get_account_number(self):
+		self._report_new_message("Print the Google Voice account number")
 
 	def do_get_callback_numbers(self, args):
 		if args:
@@ -135,6 +203,23 @@ class DebugPromptChannel(tp.ChannelTypeText, cmd.Cmd):
 		except Exception, e:
 			self._report_new_message(str(e))
 
+	def help_get_callback_numbers(self):
+		self._report_new_message("Print a list of all configured callback numbers")
+
+	def do_get_sane_callback_number(self, args):
+		if args:
+			self._report_new_message("No arguments supported")
+			return
+
+		try:
+			number = gvoice.backend.get_sane_callback(self._conn.session.backend)
+			self._report_new_message(number)
+		except Exception, e:
+			self._report_new_message(str(e))
+
+	def help_get_sane_callback_number(self):
+		self._report_new_message("Print the best guess of callback numbers to use")
+
 	def do_get_callback_number(self, args):
 		if args:
 			self._report_new_message("No arguments supported")
@@ -146,18 +231,25 @@ class DebugPromptChannel(tp.ChannelTypeText, cmd.Cmd):
 		except Exception, e:
 			self._report_new_message(str(e))
 
+	def help_get_callback_number(self):
+		self._report_new_message("Print the callback number currently enabled")
+
 	def do_call(self, args):
-		if len(args) != 1:
+		if not args:
 			self._report_new_message("Must specify the phone number and only the phone nunber")
 			return
 
 		try:
-			number = args[0]
+			number = args
 			self._conn.session.backend.call(number)
 		except Exception, e:
 			self._report_new_message(str(e))
 
+	def help_call(self):
+		self._report_new_message("\n".join(["call NUMBER", "Initiate a callback, Google forwarding the call to the callback number"]))
+
 	def do_send_sms(self, args):
+		args = args.split(" ")
 		if 1 < len(args):
 			self._report_new_message("Must specify the phone number and then message")
 			return
@@ -165,6 +257,51 @@ class DebugPromptChannel(tp.ChannelTypeText, cmd.Cmd):
 		try:
 			number = args[0]
 			message = " ".join(args[1:])
-			self._conn.session.backend.send_sms(number, message)
+			self._conn.session.backend.send_sms([number], message)
 		except Exception, e:
 			self._report_new_message(str(e))
+
+	def help_send_sms(self):
+		self._report_new_message("\n".join(["send_sms NUMBER MESSAGE0 MESSAGE1 ...", "Send an sms to number NUMBER"]))
+
+	def do_version(self, args):
+		if args:
+			self._report_new_message("No arguments supported")
+			return
+		self._report_new_message("%s-%s" % (constants.__version__, constants.__build__))
+
+	def help_version(self):
+		self._report_new_message("Prints the version (hint: %s-%s)" % (constants.__version__, constants.__build__))
+
+	def do_grab_log(self, args):
+		if args:
+			self._report_new_message("No arguments supported")
+			return
+
+		try:
+			publishProps = self._conn.generate_props(telepathy.CHANNEL_TYPE_FILE_TRANSFER, self.__otherHandle, False)
+			self._conn._channel_manager.channel_for_props(publishProps, signal=True)
+		except Exception, e:
+			self._report_new_message(str(e))
+
+	def help_grab_log(self):
+		self._report_new_message("Download the debug log for including with bug report")
+		self._report_new_message("Warning: this may contain sensitive information")
+
+	def do_save_log(self, args):
+		if not args:
+			self._report_new_message("Must specify a filename to save the log to")
+			return
+
+		try:
+			filename = os.path.expanduser(args)
+			with open(constants._user_logpath_, "r") as f:
+				logLines = f.xreadlines()
+				log = "".join(logLines)
+			with open(filename, "w") as f:
+				f.write(log)
+		except Exception, e:
+			self._report_new_message(str(e))
+
+	def help_save_log(self):
+		self._report_new_message("Save the log to a specified location")

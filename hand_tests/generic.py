@@ -75,7 +75,7 @@ class DisplayParams(Action):
 
 	def queue_action(self):
 		self._cm[telepathy.interfaces.CONN_MGR_INTERFACE].GetParameters(
-			'sip',
+			'bluetooth,
 			reply_handler = self._on_done,
 			error_handler = self._on_error,
 		)
@@ -123,7 +123,7 @@ class RequestConnection(Action):
 
 	def queue_action(self):
 		self._cm[telepathy.server.CONNECTION_MANAGER].RequestConnection(
-			'sip',
+			'bluetooth",
 			{
 				'account':  self._username,
 				'password': self._password,

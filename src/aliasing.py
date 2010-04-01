@@ -3,15 +3,14 @@ import logging
 import telepathy
 
 import tp
-import gtk_toolbox
-import util.misc as util_misc
+import util.misc as misc_utils
 import handle
 
 
-_moduleLogger = logging.getLogger('aliasing')
+_moduleLogger = logging.getLogger(__name__)
 
 
-def _make_pretty_with_areacodde(phonenumber):
+def _make_pretty_with_areacode(phonenumber):
 	prettynumber = "(%s)" % (phonenumber[0:3], )
 	if 3 < len(phonenumber):
 		prettynumber += " %s" % (phonenumber[3:6], )
@@ -28,13 +27,14 @@ def _make_pretty_local(phonenumber):
 
 
 def _make_pretty_international(phonenumber):
+	prettynumber = phonenumber
 	if phonenumber.startswith("0"):
 		prettynumber = "+%s " % (phonenumber[0:3], )
 		if 3 < len(phonenumber):
-			prettynumber += _make_pretty_with_areacodde(phonenumber[3:])
-	if phonenumber.startswith("1"):
+			prettynumber += _make_pretty_with_areacode(phonenumber[3:])
+	elif phonenumber.startswith("1"):
 		prettynumber = "1 "
-		prettynumber += _make_pretty_with_areacodde(phonenumber[1:])
+		prettynumber += _make_pretty_with_areacode(phonenumber[1:])
 	return prettynumber
 
 
@@ -55,9 +55,9 @@ def make_pretty(phonenumber):
 	>>> make_pretty("1234567")
 	'123-4567'
 	>>> make_pretty("2345678901")
-	'(234) 567-8901'
+	'+1 (234) 567-8901'
 	>>> make_pretty("12345678901")
-	'1 (234) 567-8901'
+	'+1 (234) 567-8901'
 	>>> make_pretty("01234567890")
 	'+012 (345) 678-90'
 	>>> make_pretty("+01234567890")
@@ -72,7 +72,7 @@ def make_pretty(phonenumber):
 	if phonenumber is None or phonenumber is "":
 		return ""
 
-	phonenumber = util_misc.strip_number(phonenumber)
+	phonenumber = misc_utils.normalize_number(phonenumber)
 
 	if phonenumber[0] == "+":
 		prettynumber = _make_pretty_international(phonenumber[1:])
@@ -81,7 +81,7 @@ def make_pretty(phonenumber):
 	elif 8 < len(phonenumber) and phonenumber[0] in ("0", "1"):
 		prettynumber = _make_pretty_international(phonenumber)
 	elif 7 < len(phonenumber):
-		prettynumber = _make_pretty_with_areacodde(phonenumber)
+		prettynumber = _make_pretty_with_areacode(phonenumber)
 	elif 3 < len(phonenumber):
 		prettynumber = _make_pretty_local(phonenumber)
 	else:
@@ -90,9 +90,6 @@ def make_pretty(phonenumber):
 
 
 class AliasingMixin(tp.ConnectionInterfaceAliasing):
-
-	USER_ALIAS_ACCOUNT = "account"
-	USER_ALIAS_CALLBACK = "callback"
 
 	def __init__(self):
 		tp.ConnectionInterfaceAliasing.__init__(self)
@@ -105,28 +102,28 @@ class AliasingMixin(tp.ConnectionInterfaceAliasing):
 		raise NotImplementedError("Abstract property called")
 
 	@property
-	def userAliasType(self):
+	def callbackNumberParameter(self):
 		"""
 		@abstract
 		"""
 		raise NotImplementedError("Abstract property called")
 
-	def handle(self, handleType, handleId):
+	def get_handle_by_id(self, handleType, handleId):
 		"""
 		@abstract
 		"""
 		raise NotImplementedError("Abstract function called")
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def GetAliasFlags(self):
 		return 0
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def RequestAliases(self, contactHandleIds):
 		_moduleLogger.debug("Called RequestAliases")
 		return [self._get_alias(handleId) for handleId in contactHandleIds]
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def GetAliases(self, contactHandleIds):
 		_moduleLogger.debug("Called GetAliases")
 
@@ -136,48 +133,43 @@ class AliasingMixin(tp.ConnectionInterfaceAliasing):
 		)
 		return idToAlias
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def SetAliases(self, aliases):
 		_moduleLogger.debug("Called SetAliases")
-		if self.userAliasType == self.USER_ALIAS_ACCOUNT:
-			raise telepathy.errors.PermissionDenied("No user customizable aliases")
-		elif self.userAliasType != self.USER_ALIAS_CALLBACK:
-			raise RuntimeError("Invalid alias type: %r" % self.userAliasType)
-
 		# first validate that no other handle types are included
-		userHandleAndAlias = None
+		handleId, alias = None, None
 		for handleId, alias in aliases.iteritems():
 			h = self.get_handle_by_id(telepathy.HANDLE_TYPE_CONTACT, handleId)
-			if not isinstance(h, handle.ConnectionHandle):
-				raise telepathy.errors.PermissionDenied("No user customizable aliases")
-			userHandleAndAlias = h, alias
-		if userHandleAndAlias is None:
-			_moduleLogger.debug("No user handle")
-			return
+			if isinstance(h, handle.ConnectionHandle):
+				break
+		else:
+			raise telepathy.errors.PermissionDenied("No user customizable aliases")
+
+		uglyNumber = misc_utils.normalize_number(alias)
+		if len(uglyNumber) == 0:
+			# Reset to the original from login if one was provided
+			uglyNumber = self.callbackNumberParameter
+		if not misc_utils.is_valid_number(uglyNumber):
+			raise telepathy.errors.InvalidArgument("Invalid phone number %r" % (uglyNumber, ))
 
 		# Update callback
-		uglyNumber = util_misc.strip_number(userHandleAndAlias[1])
 		self.session.backend.set_callback_number(uglyNumber)
 
 		# Inform of change
-		changedAliases = (userHandleAndAlias, )
+		userAlias = make_pretty(uglyNumber)
+		changedAliases = ((handleId, userAlias), )
 		self.AliasesChanged(changedAliases)
 
 	def _get_alias(self, handleId):
 		h = self.get_handle_by_id(telepathy.HANDLE_TYPE_CONTACT, handleId)
 		if isinstance(h, handle.ConnectionHandle):
-			if self.userAliasType == self.USER_ALIAS_CALLBACK:
-				aliasNumber = self.session.backend.get_callback_number()
-			elif self.userAliasType == self.USER_ALIAS_ACCOUNT:
-				aliasNumber = self.session.backend.get_account_number()
-			else:
-				raise RuntimeError("Invalid alias type: %r" % self.userAliasType)
+			aliasNumber = self.session.backend.get_callback_number()
 			userAlias = make_pretty(aliasNumber)
 			return userAlias
 		else:
-			contactId = h.contactID
-			if contactId:
-				contactAlias = self.session.addressbook.get_contact_name(contactId)
-			else:
-				contactAlias = make_pretty(h.phoneNumber)
+			number = h.phoneNumber
+			try:
+				contactAlias = self.session.addressbook.get_contact_name(number)
+			except KeyError:
+				contactAlias = make_pretty(number)
 			return contactAlias

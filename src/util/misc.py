@@ -16,6 +16,45 @@ import warnings
 import string
 
 
+_indentationLevel = [0]
+
+
+def log_call(logger):
+
+	def log_call_decorator(func):
+
+		@functools.wraps(func)
+		def wrapper(*args, **kwds):
+			logger.debug("%s> %s" % (" " * _indentationLevel[0], func.__name__, ))
+			_indentationLevel[0] += 1
+			try:
+				return func(*args, **kwds)
+			finally:
+				_indentationLevel[0] -= 1
+				logger.debug("%s< %s" % (" " * _indentationLevel[0], func.__name__, ))
+
+		return wrapper
+
+	return log_call_decorator
+
+
+def log_exception(logger):
+
+	def log_exception_decorator(func):
+
+		@functools.wraps(func)
+		def wrapper(*args, **kwds):
+			try:
+				return func(*args, **kwds)
+			except Exception:
+				logger.exception(func.__name__)
+				raise
+
+		return wrapper
+
+	return log_exception_decorator
+
+
 def printfmt(template):
 	"""
 	This hides having to create the Template object and call substitute/safe_substitute on it. For example:
@@ -643,13 +682,76 @@ def lexical_scope(*args):
 		del frame
 
 
-def strip_number(prettynumber):
+def normalize_number(prettynumber):
 	"""
 	function to take a phone number and strip out all non-numeric
 	characters
 
-	>>> strip_number("+012-(345)-678-90")
-	'01234567890'
+	>>> normalize_number("+012-(345)-678-90")
+	'+01234567890'
+	>>> normalize_number("1-(345)-678-9000")
+	'+13456789000'
+	>>> normalize_number("+1-(345)-678-9000")
+	'+13456789000'
 	"""
 	uglynumber = re.sub('[^0-9+]', '', prettynumber)
+	if uglynumber.startswith("+"):
+		pass
+	elif uglynumber.startswith("1") and len(uglynumber) == 11:
+		uglynumber = "+"+uglynumber
+	elif len(uglynumber) == 10:
+		uglynumber = "+1"+uglynumber
+	else:
+		pass
+
+	#validateRe = re.compile("^\+?[0-9]{10,}$")
+	#assert validateRe.match(uglynumber) is not None
+
 	return uglynumber
+
+
+_VALIDATE_RE = re.compile("^\+?[0-9]{10,}$")
+
+
+def is_valid_number(number):
+	"""
+	@returns If This number be called ( syntax validation only )
+	"""
+	return _VALIDATE_RE.match(number) is not None
+
+
+def parse_version(versionText):
+	"""
+	>>> parse_version("0.5.2")
+	[0, 5, 2]
+	"""
+	return [
+		int(number)
+		for number in versionText.split(".")
+	]
+
+
+def compare_versions(leftParsedVersion, rightParsedVersion):
+	"""
+	>>> compare_versions([0, 1, 2], [0, 1, 2])
+	0
+	>>> compare_versions([0, 1, 2], [0, 1, 3])
+	-1
+	>>> compare_versions([0, 1, 2], [0, 2, 2])
+	-1
+	>>> compare_versions([0, 1, 2], [1, 1, 2])
+	-1
+	>>> compare_versions([0, 1, 3], [0, 1, 2])
+	1
+	>>> compare_versions([0, 2, 2], [0, 1, 2])
+	1
+	>>> compare_versions([1, 1, 2], [0, 1, 2])
+	1
+	"""
+	for left, right in zip(leftParsedVersion, rightParsedVersion):
+		if left < right:
+			return -1
+		elif right < left:
+			return 1
+	else:
+		return 0

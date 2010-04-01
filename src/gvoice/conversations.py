@@ -1,26 +1,71 @@
 #!/usr/bin/python
 
-# @bug Its inconsistent as to whether messages from contacts come as from the
-# contact or just a raw number.  It seems GV is inconsistent about populating the contact id, so we might have to pull from the addressbook
-# @bug False positives on startup.  Luckily the object path for the channel is
-# unique, so can use that to cache some of the data out to file
+from __future__ import with_statement
 
+import datetime
 import logging
 
+try:
+	import cPickle
+	pickle = cPickle
+except ImportError:
+	import pickle
+
+import constants
 import util.coroutines as coroutines
-import util.misc as util_misc
+import util.misc as misc_utils
 
 
-_moduleLogger = logging.getLogger("gvoice.conversations")
+_moduleLogger = logging.getLogger(__name__)
 
 
 class Conversations(object):
+
+	OLDEST_COMPATIBLE_FORMAT_VERSION = misc_utils.parse_version("0.8.0")
+	OLDEST_MESSAGE_WINDOW = datetime.timedelta(days=60)
 
 	def __init__(self, getter):
 		self._get_raw_conversations = getter
 		self._conversations = {}
 
 		self.updateSignalHandler = coroutines.CoTee()
+
+	@property
+	def _name(self):
+		return repr(self._get_raw_conversations.__name__)
+
+	def load(self, path):
+		assert not self._conversations
+		try:
+			with open(path, "rb") as f:
+				fileVersion, fileBuild, convs = pickle.load(f)
+		except (pickle.PickleError, IOError, EOFError, ValueError):
+			_moduleLogger.exception("While loading for %s" % self._name)
+			return
+
+		if misc_utils.compare_versions(
+			self.OLDEST_COMPATIBLE_FORMAT_VERSION,
+			misc_utils.parse_version(fileVersion),
+		) <= 0:
+			_moduleLogger.info("%s Loaded cache" % (self._name, ))
+			self._conversations = convs
+		else:
+			_moduleLogger.debug(
+				"%s Skipping cache due to version mismatch (%s-%s)" % (
+					self._name, fileVersion, fileBuild
+				)
+			)
+
+	def save(self, path):
+		try:
+			_moduleLogger.info("%s Saving cache" % (self._name, ))
+			for conv in self._conversations.itervalues():
+				conv.compress(self.OLDEST_MESSAGE_WINDOW)
+			dataToDump = (constants.__version__, constants.__build__, self._conversations)
+			with open(path, "wb") as f:
+				pickle.dump(dataToDump, f, pickle.HIGHEST_PROTOCOL)
+		except (pickle.PickleError, IOError):
+			_moduleLogger.exception("While saving for %s" % self._name)
 
 	def update(self, force=False):
 		if not force and self._conversations:
@@ -32,7 +77,7 @@ class Conversations(object):
 		conversations = list(self._get_raw_conversations())
 		conversations.sort()
 		for conversation in conversations:
-			key = conversation.contactId, util_misc.strip_number(conversation.number)
+			key = misc_utils.normalize_number(conversation.number)
 			try:
 				mergedConversations = self._conversations[key]
 			except KeyError:
@@ -44,7 +89,7 @@ class Conversations(object):
 				isConversationUpdated = True
 			except RuntimeError, e:
 				if False:
-					_moduleLogger.info("Skipping conversation for %r because '%s'" % (key, e))
+					_moduleLogger.debug("%s Skipping conversation for %r because '%s'" % (self._name, key, e))
 				isConversationUpdated = False
 
 			if isConversationUpdated:
@@ -64,7 +109,7 @@ class Conversations(object):
 		try:
 			del self._conversations[key]
 		except KeyError:
-			_moduleLogger.info("Conversation never existed for %r" % (key,))
+			_moduleLogger.info("%s Conversation never existed for %r" % (self._name, key, ))
 
 	def clear_all(self):
 		self._conversations.clear()
@@ -77,20 +122,52 @@ class MergedConversations(object):
 
 	def append_conversation(self, newConversation):
 		self._validate(newConversation)
+		similarExist = False
 		for similarConversation in self._find_related_conversation(newConversation.id):
 			self._update_previous_related_conversation(similarConversation, newConversation)
 			self._remove_repeats(similarConversation, newConversation)
+			similarExist = True
+		if similarExist:
+			# Hack to reduce a race window with GV marking messages as read
+			# because it thinks we replied when really we replied to the
+			# previous message.  Clients of this code are expected to handle
+			# this gracefully.  Other race conditions may exist but clients are
+			# responsible for them
+			if newConversation.messages:
+				newConversation.isRead = False
+			else:
+				newConversation.isRead = True
 		self._conversations.append(newConversation)
+
+	def to_dict(self):
+		selfDict = {}
+		selfDict["conversations"] = [conv.to_dict() for conv in self._conversations]
+		return selfDict
 
 	@property
 	def conversations(self):
 		return self._conversations
 
+	def compress(self, timedelta):
+		now = datetime.datetime.now()
+		oldNumConvs = len(self._conversations)
+		oldConvs = self._conversations
+		self._conversations = [
+			conv
+			for conv in self._conversations
+			if (now - conv.time) < timedelta
+		]
+		newNumConvs = len(self._conversations)
+		if oldNumConvs != newNumConvs:
+			_moduleLogger.debug("Compressed conversations from %s to %s" % (oldNumConvs, newNumConvs))
+		else:
+			_moduleLogger.debug("Did not compress, %s" % (newNumConvs))
+
 	def _validate(self, newConversation):
 		if not self._conversations:
 			return
 
-		for constantField in ("contactId", "number"):
+		for constantField in ("number", ):
 			assert getattr(self._conversations[0], constantField) == getattr(newConversation, constantField), "Constant field changed, soemthing is seriously messed up: %r v %r" % (
 				getattr(self._conversations[0], constantField),
 				getattr(newConversation, constantField),
@@ -108,7 +185,7 @@ class MergedConversations(object):
 		return similarConversations
 
 	def _update_previous_related_conversation(self, relatedConversation, newConversation):
-		for commonField in ("isRead", "isSpam", "isTrash", "isArchived"):
+		for commonField in ("isSpam", "isTrash", "isArchived"):
 			newValue = getattr(newConversation, commonField)
 			setattr(relatedConversation, commonField, newValue)
 
@@ -126,3 +203,47 @@ class MergedConversations(object):
 			len(newConversationMessages),
 		))
 		assert 0 < len(newConversation.messages), "Everything shouldn't have been removed"
+
+
+def filter_out_read(conversations):
+	return (
+		conversation
+		for conversation in conversations
+		if not conversation.isRead and not conversation.isArchived
+	)
+
+
+def is_message_from_self(message):
+	return message.whoFrom == "Me:"
+
+
+def filter_out_self(conversations):
+	return (
+		newConversation
+		for newConversation in conversations
+		if len(newConversation.messages) and any(
+			not is_message_from_self(message)
+			for message in newConversation.messages
+		)
+	)
+
+
+class FilterOutReported(object):
+
+	NULL_TIMESTAMP = datetime.datetime(1, 1, 1)
+
+	def __init__(self):
+		self._lastMessageTimestamp = self.NULL_TIMESTAMP
+
+	def get_last_timestamp(self):
+		return self._lastMessageTimestamp
+
+	def __call__(self, conversations):
+		filteredConversations = [
+			conversation
+			for conversation in conversations
+			if self._lastMessageTimestamp < conversation.time
+		]
+		if filteredConversations and self._lastMessageTimestamp < filteredConversations[0].time:
+			self._lastMessageTimestamp = filteredConversations[0].time
+		return filteredConversations

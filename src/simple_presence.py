@@ -2,13 +2,13 @@ import logging
 
 import telepathy
 
-import gtk_toolbox
+import util.misc as misc_utils
 import tp
 import handle
 import gvoice.state_machine as state_machine
 
 
-_moduleLogger = logging.getLogger("simple_presence")
+_moduleLogger = logging.getLogger(__name__)
 
 
 class BluewirePresence(object):
@@ -39,7 +39,7 @@ class BluewirePresence(object):
 		"""
 		raise NotImplementedError("Abstract function called")
 
-	def handle(self, handleType, handleId):
+	def get_handle_by_id(self, handleType, handleId):
 		"""
 		@abstract
 		"""
@@ -47,15 +47,13 @@ class BluewirePresence(object):
 
 	def get_presences(self, contactIds):
 		"""
-		@bug On Maemo 5, the connection handle is being passed in a lot, forcing lots of downloads is the webpage for dnd
-
 		@return {ContactHandle: (Status, Presence Type, Message)}
 		"""
 		presences = {}
 		for handleId in contactIds:
 			h = self.get_handle_by_id(telepathy.HANDLE_TYPE_CONTACT, handleId)
 			if isinstance(h, handle.ConnectionHandle):
-				isDnd = self.session.backend.is_dnd()
+				isDnd = self.session.is_dnd()
 				if isDnd:
 					presence = BluewirePresence.HIDDEN
 				else:
@@ -76,12 +74,12 @@ class BluewirePresence(object):
 
 	def set_presence(self, status):
 		if status == self.ONLINE:
-			self.session.backend.set_dnd(False)
+			self.session.set_dnd(False)
 			self.session.stateMachine.set_state(state_machine.StateMachine.STATE_ACTIVE)
 		elif status == self.AWAY:
 			self.session.stateMachine.set_state(state_machine.StateMachine.STATE_IDLE)
 		elif status == self.HIDDEN:
-			self.session.backend.set_dnd(True)
+			self.session.set_dnd(True)
 		elif status == self.OFFLINE:
 			self.Disconnect()
 		else:
@@ -100,7 +98,7 @@ class SimplePresenceMixin(tp.ConnectionInterfaceSimplePresence, BluewirePresence
 			{'Statuses' : self._get_statuses}
 		)
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def GetPresences(self, contacts):
 		"""
 		@return {ContactHandle: (Status, Presence Type, Message)}
@@ -111,7 +109,7 @@ class SimplePresenceMixin(tp.ConnectionInterfaceSimplePresence, BluewirePresence
 			for (h, (presenceType, presence)) in self.get_presences(contacts).iteritems()
 		)
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@misc_utils.log_exception(_moduleLogger)
 	def SetPresence(self, status, message):
 		if message:
 			raise telepathy.errors.InvalidArgument("Messages aren't supported")

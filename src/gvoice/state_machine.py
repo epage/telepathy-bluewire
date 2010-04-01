@@ -1,19 +1,13 @@
 #!/usr/bin/env python
 
-"""
-@todo Look into supporting more states
-"""
-
 import logging
-
-import gobject
 
 import util.go_utils as gobject_utils
 import util.coroutines as coroutines
-import gtk_toolbox
+import util.misc as misc_utils
 
 
-_moduleLogger = logging.getLogger("gvoice.state_machine")
+_moduleLogger = logging.getLogger(__name__)
 
 
 def to_milliseconds(**kwd):
@@ -28,6 +22,18 @@ def to_milliseconds(**kwd):
 	raise KeyError("Unknown arg: %r" % kwd)
 
 
+def to_seconds(**kwd):
+	if "milliseconds" in kwd:
+		return kwd["milliseconds"] / 1000
+	elif "seconds" in kwd:
+		return kwd["seconds"]
+	elif "minutes" in kwd:
+		return kwd["minutes"] * 60
+	elif "hours" in kwd:
+		return kwd["hours"] * 60 * 60
+	raise KeyError("Unknown arg: %r" % kwd)
+
+
 class NopStateStrategy(object):
 
 	def __init__(self):
@@ -36,12 +42,18 @@ class NopStateStrategy(object):
 	def initialize_state(self):
 		pass
 
+	def reinitialize_state(self):
+		pass
+
 	def increment_state(self):
 		pass
 
 	@property
 	def timeout(self):
 		return UpdateStateMachine.INFINITE_PERIOD
+
+	def __repr__(self):
+		return "NopStateStrategy()"
 
 
 class ConstantStateStrategy(object):
@@ -53,6 +65,9 @@ class ConstantStateStrategy(object):
 	def initialize_state(self):
 		pass
 
+	def reinitialize_state(self):
+		pass
+
 	def increment_state(self):
 		pass
 
@@ -60,12 +75,55 @@ class ConstantStateStrategy(object):
 	def timeout(self):
 		return self._timeout
 
+	def __repr__(self):
+		return "ConstantStateStrategy(timeout=%r)" % self._timeout
+
+
+class NTimesStateStrategy(object):
+
+	def __init__(self, timeouts, postTimeout):
+		assert 0 < len(timeouts)
+		for timeout in timeouts:
+			assert 0 < timeout or timeout == UpdateStateMachine.INFINITE_PERIOD
+		assert 0 < postTimeout or postTimeout == UpdateStateMachine.INFINITE_PERIOD
+		self._timeouts = timeouts
+		self._postTimeout = postTimeout
+
+		self._attemptCount = 0
+
+	def initialize_state(self):
+		self._attemptCount = len(self._timeouts)
+
+	def reinitialize_state(self):
+		self._attemptCount = 0
+
+	def increment_state(self):
+		self._attemptCount += 1
+
+	@property
+	def timeout(self):
+		try:
+			return self._timeouts[self._attemptCount]
+		except IndexError:
+			return self._postTimeout
+
+	def __str__(self):
+		return "NTimesStateStrategy(timeout=%r)" % (
+			self.timeout,
+		)
+
+	def __repr__(self):
+		return "NTimesStateStrategy(timeouts=%r, postTimeout=%r)" % (
+			self._timeouts,
+			self._postTimeout,
+		)
+
 
 class GeometricStateStrategy(object):
 
 	def __init__(self, init, min, max):
-		assert 0 < init and init < max and init != UpdateStateMachine.INFINITE_PERIOD
-		assert 0 < min and min != UpdateStateMachine.INFINITE_PERIOD
+		assert 0 < init and init < max or init == UpdateStateMachine.INFINITE_PERIOD
+		assert 0 < min or min == UpdateStateMachine.INFINITE_PERIOD
 		assert min < max or max == UpdateStateMachine.INFINITE_PERIOD
 		self._min = min
 		self._max = max
@@ -73,17 +131,38 @@ class GeometricStateStrategy(object):
 		self._current = 0
 
 	def initialize_state(self):
-		self._current = self._min / 2
+		self._current = self._max
+
+	def reinitialize_state(self):
+		self._current = self._min
 
 	def increment_state(self):
-		if self._max == UpdateStateMachine.INFINITE_PERIOD:
+		if self._current == UpdateStateMachine.INFINITE_PERIOD:
+			pass
+		if self._init == UpdateStateMachine.INFINITE_PERIOD:
+			self._current = UpdateStateMachine.INFINITE_PERIOD
+		elif self._max == UpdateStateMachine.INFINITE_PERIOD:
 			self._current *= 2
 		else:
 			self._current = min(2 * self._current, self._max - self._init)
 
 	@property
 	def timeout(self):
-		return self._init + self._current
+		if UpdateStateMachine.INFINITE_PERIOD in (self._init, self._current):
+			timeout = UpdateStateMachine.INFINITE_PERIOD
+		else:
+			timeout = self._init + self._current
+		return timeout
+
+	def __str__(self):
+		return "GeometricStateStrategy(timeout=%r)" % (
+			self.timeout
+		)
+
+	def __repr__(self):
+		return "GeometricStateStrategy(init=%r, min=%r, max=%r)" % (
+			self._init, self._min, self._max
+		)
 
 
 class StateMachine(object):
@@ -147,15 +226,18 @@ class UpdateStateMachine(StateMachine):
 	# Making sure the it is initialized is finicky, be careful
 
 	INFINITE_PERIOD = -1
+	DEFAULT_MAX_TIMEOUT = to_seconds(hours=24)
 
 	_IS_DAEMON = True
 
-	def __init__(self, updateItems, name=""):
+	def __init__(self, updateItems, name="", maxTime = DEFAULT_MAX_TIMEOUT):
 		self._name = name
 		self._updateItems = updateItems
+		self._maxTime = maxTime
+		self._isActive = False
 
 		self._state = self.STATE_ACTIVE
-		self._timeoutId = None
+		self._onTimeout = gobject_utils.Timeout(self._on_timeout)
 
 		self._strategies = {}
 		self._callback = coroutines.func_sink(
@@ -164,23 +246,38 @@ class UpdateStateMachine(StateMachine):
 			)
 		)
 
+	def __str__(self):
+		return """UpdateStateMachine(
+	name=%r,
+	strategie=%s,
+	isActive=%r,
+	isPolling=%r,
+)""" % (self._name, self._strategy, self._isActive, self._onTimeout.is_running())
+
+	def __repr__(self):
+		return """UpdateStateMachine(
+	name=%r,
+	strategie=%r,
+)""" % (self._name, self._strategies)
+
 	def set_state_strategy(self, state, strategy):
 		self._strategies[state] = strategy
 
 	def start(self):
-		assert self._timeoutId is None
 		for strategy in self._strategies.itervalues():
 			strategy.initialize_state()
 		if self._strategy.timeout != self.INFINITE_PERIOD:
-			self._timeoutId = gobject.idle_add(self._on_timeout)
+			self._onTimeout.start(seconds=0)
+		self._isActive = True
 		_moduleLogger.info("%s Starting State Machine" % (self._name, ))
 
 	def stop(self):
 		_moduleLogger.info("%s Stopping State Machine" % (self._name, ))
-		self._stop_update()
+		self._isActive = False
+		self._onTimeout.cancel()
 
 	def close(self):
-		assert self._timeoutId is None
+		self._onTimeout.cancel()
 		self._callback = None
 
 	def set_state(self, newState):
@@ -190,14 +287,13 @@ class UpdateStateMachine(StateMachine):
 		_moduleLogger.info("%s Transitioning from %s to %s" % (self._name, oldState, newState))
 
 		self._state = newState
-		self._reset_timers()
+		self._reset_timers(initialize=True)
 
 	@property
 	def state(self):
 		return self._state
 
 	def reset_timers(self):
-		_moduleLogger.info("%s Resetting State Machine" % (self._name, ))
 		self._reset_timers()
 
 	@property
@@ -208,41 +304,40 @@ class UpdateStateMachine(StateMachine):
 	def _strategy(self):
 		return self._strategies[self._state]
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	@property
+	def maxTime(self):
+		return self._maxTime
+
+	@misc_utils.log_exception(_moduleLogger)
 	def _request_reset_timers(self, *args):
 		self._reset_timers()
 
-	def _set_initial_period(self):
-		self._currentPeriod = self._INITIAL_ACTIVE_PERIOD / 2 # We will double it later
-
-	def _schedule_update(self):
-		assert self._timeoutId is None
-		self._strategy.increment_state()
-		nextTimeout = self._strategy.timeout
-		if nextTimeout != self.INFINITE_PERIOD:
-			self._timeoutId = gobject.timeout_add(nextTimeout, self._on_timeout)
-		_moduleLogger.info("%s Next update in %s ms" % (self._name, nextTimeout, ))
-
-	def _stop_update(self):
-		if self._timeoutId is None:
-			return
-		gobject.source_remove(self._timeoutId)
-		self._timeoutId = None
-
-	def _reset_timers(self):
-		if self._timeoutId is None:
+	def _reset_timers(self, initialize=False):
+		if not self._isActive:
 			return # not started yet
-		self._stop_update()
-		self._strategy.initialize_state()
+		_moduleLogger.info("%s Resetting State Machine" % (self._name, ))
+		self._onTimeout.cancel()
+		if initialize:
+			self._strategy.initialize_state()
+		else:
+			self._strategy.reinitialize_state()
 		self._schedule_update()
 
-	@gtk_toolbox.log_exception(_moduleLogger)
+	def _schedule_update(self):
+		self._strategy.increment_state()
+		nextTimeout = self._strategy.timeout
+		if nextTimeout != self.INFINITE_PERIOD and nextTimeout < self._maxTime:
+			assert 0 < nextTimeout
+			self._onTimeout.start(seconds=nextTimeout)
+			_moduleLogger.info("%s Next update in %s seconds" % (self._name, nextTimeout, ))
+		else:
+			_moduleLogger.info("%s No further updates (timeout is %s seconds)" % (self._name, nextTimeout, ))
+
+	@misc_utils.log_exception(_moduleLogger)
 	def _on_timeout(self):
-		self._timeoutId = None
 		self._schedule_update()
 		for item in self._updateItems:
 			try:
 				item.update(force=True)
 			except Exception:
 				_moduleLogger.exception("Update failed for %r" % item)
-		return False # do not continue
