@@ -72,7 +72,6 @@ def build_package(distribution):
 		"debian": "comm",
 		"diablo": "user/network",
 		"fremantle": "user/network",
-		"mer": "user/network",
 	}[distribution]
 	p.depends = ", ".join([
 		"python (>= 2.5) | python2.5",
@@ -84,11 +83,10 @@ def build_package(distribution):
 		"debian": "",
 		"diablo": ", account-plugin-haze",
 		"fremantle": ", account-plugin-haze",
-		"mer": "",
 	}[distribution]
 	p.arch = "all"
 	p.urgency = "low"
-	p.distribution = "diablo fremantle mer debian"
+	p.distribution = "diablo fremantle debian"
 	p.repository = "extras"
 	p.changelog = __changelog__
 	p.postinstall = __postinstall__
@@ -96,7 +94,6 @@ def build_package(distribution):
 		"debian": "26x26-bluewire.png",
 		"diablo": "26x26-bluewire.png",
 		"fremantle": "64x64-bluewire.png", # Fremantle natively uses 48x48
-		"mer": "64x64-bluewire.png",
 	}[distribution]
 	for relPath, files in unflatten_files(find_files(".")).iteritems():
 		fullPath = "/usr/lib/bluewire"
@@ -109,7 +106,7 @@ def build_package(distribution):
 	p["/usr/share/dbus-1/services"] = ["org.freedesktop.Telepathy.ConnectionManager.bluewire.service"]
 	if distribution in ("debian", ):
 		p["/usr/share/mission-control/profiles"] = ["bluewire.profile.%s|bluewire.profile"% distribution]
-	elif distribution in ("diablo", "fremantle", "mer"):
+	elif distribution in ("diablo", "fremantle"):
 		p["/usr/share/osso-rtcom"] = ["bluewire.profile.%s|bluewire.profile"% distribution]
 	p["/usr/lib/telepathy"] = ["telepathy-bluewire"]
 	p["/usr/share/telepathy/managers"] = ["bluewire.manager"]
