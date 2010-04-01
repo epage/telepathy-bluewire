@@ -82,7 +82,6 @@ def build_package(distribution):
 	])
 	p.depends += {
 		"debian": "",
-		"chinook": "",
 		"diablo": ", account-plugin-haze",
 		"fremantle": ", account-plugin-haze",
 		"mer": "",
