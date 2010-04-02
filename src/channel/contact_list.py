@@ -3,7 +3,6 @@ import logging
 import telepathy
 
 import tp
-import util.coroutines as coroutines
 import util.misc as misc_utils
 import handle
 
@@ -30,20 +29,13 @@ class AllContactsListChannel(
 		self.__members = set()
 
 		if self._conn.options.useGVContacts:
-			self._callback = coroutines.func_sink(
-				coroutines.expand_positional(
-					self._on_contacts_refreshed
-				)
-			)
-			self.__session.addressbook.updateSignalHandler.register_sink(
-				self._callback
-			)
+			self.__updateId = self.__session.addressbook.connect("contacts_changed", self._on_contacts_refreshed)
 
 			addressbook = connection.session.addressbook
 			contacts = addressbook.get_numbers()
 			self._process_refresh(addressbook, set(contacts), set(), set())
 		else:
-			self._callback = None
+			self.__updateId = None
 
 		self.GroupFlagsChanged(0, 0)
 
@@ -54,11 +46,9 @@ class AllContactsListChannel(
 
 	def close(self):
 		_moduleLogger.debug("Closing contact list")
-		if self._callback is not None:
-			self.__session.addressbook.updateSignalHandler.unregister_sink(
-				self._callback
-			)
-			self._callback = None
+		if self.__updateId is not None:
+			self.__session.addressbook.updateSignalHandler.disconnect(self.__updateId)
+			self.__updateId = None
 
 		tp.ChannelTypeContactList.Close(self)
 		self.remove_from_connection()
