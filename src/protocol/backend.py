@@ -72,6 +72,7 @@ class BluetoothConnection(gobject.GObject):
 
 	def _on_data(self, source, condition):
 		self.emit("data_ready")
+		return True
 
 
 gobject.type_register(BluetoothConnection)
@@ -122,6 +123,7 @@ class BluetoothListener(gobject.GObject):
 		newSocket.settimeout(self._timeout)
 		connection = BluetoothConnection(newSocket, address, self._psm)
 		self.emit("incoming", connection)
+		return True
 
 
 gobject.type_register(BluetoothListener)
@@ -201,6 +203,7 @@ class BluetoothBackend(gobject.GObject):
 
 	def _on_incoming(self, connection):
 		self.emit("incoming", connection)
+		return True
 
 
 gobject.type_register(BluetoothBackend)
