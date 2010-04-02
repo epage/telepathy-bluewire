@@ -26,7 +26,7 @@ import channel_manager
 _moduleLogger = logging.getLogger(__name__)
 
 
-class TheOneRingOptions(object):
+class BluewireOptions(object):
 
 	useGVContacts = True
 
@@ -53,26 +53,15 @@ class BluewireConnection(
 
 	# overiding base class variable
 	_mandatory_parameters = {
-		'account': 's',
-		'password': 's',
 	}
 	# overiding base class variable
 	_optional_parameters = {
-		'forward': 's',
-		'use-gv-contacts': 'b',
 		'contacts-poll-period-in-hours': 'i',
-		'voicemail-poll-period-in-minutes': 'i',
-		'texts-poll-period-in-minutes': 'i',
 	}
 	_parameter_defaults = {
-		'forward': '',
-		'use-gv-contacts': TheOneRingOptions.useGVContacts,
-		'contacts-poll-period-in-hours': TheOneRingOptions.contactsPollPeriodInHours,
-		'voicemail-poll-period-in-minutes': TheOneRingOptions.voicemailPollPeriodInMinutes,
-		'texts-poll-period-in-minutes': TheOneRingOptions.textsPollPeriodInMinutes,
+		'contacts-poll-period-in-hours': BluewireOptions.contactsPollPeriodInHours,
 	}
 	_secret_parameters = set((
-		"password",
 	))
 
 	@misc_utils.log_exception(_moduleLogger)
@@ -80,7 +69,7 @@ class BluewireConnection(
 		self.check_parameters(parameters)
 
 		# Connection init must come first
-		self.__options = TheOneRingOptions(parameters)
+		self.__options = BluewireOptions(parameters)
 		self.__session = protocol.session.Session(
 			defaults = {
 				"contacts": (self.__options.contactsPollPeriodInHours, "hours"),

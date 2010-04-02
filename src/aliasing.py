@@ -10,85 +10,6 @@ import handle
 _moduleLogger = logging.getLogger(__name__)
 
 
-def _make_pretty_with_areacode(phonenumber):
-	prettynumber = "(%s)" % (phonenumber[0:3], )
-	if 3 < len(phonenumber):
-		prettynumber += " %s" % (phonenumber[3:6], )
-		if 6 < len(phonenumber):
-			prettynumber += "-%s" % (phonenumber[6:], )
-	return prettynumber
-
-
-def _make_pretty_local(phonenumber):
-	prettynumber = "%s" % (phonenumber[0:3], )
-	if 3 < len(phonenumber):
-		prettynumber += "-%s" % (phonenumber[3:], )
-	return prettynumber
-
-
-def _make_pretty_international(phonenumber):
-	prettynumber = phonenumber
-	if phonenumber.startswith("0"):
-		prettynumber = "+%s " % (phonenumber[0:3], )
-		if 3 < len(phonenumber):
-			prettynumber += _make_pretty_with_areacode(phonenumber[3:])
-	elif phonenumber.startswith("1"):
-		prettynumber = "1 "
-		prettynumber += _make_pretty_with_areacode(phonenumber[1:])
-	return prettynumber
-
-
-def make_pretty(phonenumber):
-	"""
-	Function to take a phone number and return the pretty version
-	pretty numbers:
-		if phonenumber begins with 0:
-			...-(...)-...-....
-		if phonenumber begins with 1: ( for gizmo callback numbers )
-			1 (...)-...-....
-		if phonenumber is 13 digits:
-			(...)-...-....
-		if phonenumber is 10 digits:
-			...-....
-	>>> make_pretty("12")
-	'12'
-	>>> make_pretty("1234567")
-	'123-4567'
-	>>> make_pretty("2345678901")
-	'+1 (234) 567-8901'
-	>>> make_pretty("12345678901")
-	'+1 (234) 567-8901'
-	>>> make_pretty("01234567890")
-	'+012 (345) 678-90'
-	>>> make_pretty("+01234567890")
-	'+012 (345) 678-90'
-	>>> make_pretty("+12")
-	'+1 (2)'
-	>>> make_pretty("+123")
-	'+1 (23)'
-	>>> make_pretty("+1234")
-	'+1 (234)'
-	"""
-	if phonenumber is None or phonenumber is "":
-		return ""
-
-	phonenumber = misc_utils.normalize_number(phonenumber)
-
-	if phonenumber[0] == "+":
-		prettynumber = _make_pretty_international(phonenumber[1:])
-		if not prettynumber.startswith("+"):
-			prettynumber = "+"+prettynumber
-	elif 8 < len(phonenumber) and phonenumber[0] in ("0", "1"):
-		prettynumber = _make_pretty_international(phonenumber)
-	elif 7 < len(phonenumber):
-		prettynumber = _make_pretty_with_areacode(phonenumber)
-	elif 3 < len(phonenumber):
-		prettynumber = _make_pretty_local(phonenumber)
-	else:
-		prettynumber = phonenumber
-	return prettynumber.strip()
-
-
 class AliasingMixin(tp.ConnectionInterfaceAliasing):
 
 	def __init__(self):
@@ -96,13 +17,6 @@ class AliasingMixin(tp.ConnectionInterfaceAliasing):
 
 	@property
 	def session(self):
-		"""
-		@abstract
-		"""
-		raise NotImplementedError("Abstract property called")
-
-	@property
-	def callbackNumberParameter(self):
 		"""
 		@abstract
 		"""

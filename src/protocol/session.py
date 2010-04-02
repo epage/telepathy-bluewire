@@ -1,12 +1,9 @@
 #!/usr/bin/env python
 
-import os
-import time
 import logging
 
 import backend
 import addressbook
-import conversations
 import state_machine
 
 
@@ -75,7 +72,7 @@ class Session(object):
 		self._backend.logout()
 
 	def is_logged_in(self):
-		return self._backend.is_logged_in():
+		return self._backend.is_logged_in()
 
 	@property
 	def backend(self):

@@ -9,7 +9,7 @@ import gobject
 _moduleLogger = logging.getLogger(__name__)
 
 
-class Addressbook(object):
+class Addressbook(gobject.GObject):
 
 	__gsignals__ = {
 		'contacts_changed' : (

@@ -1,6 +1,5 @@
 import logging
 
-import dbus
 import telepathy
 
 try:
@@ -16,129 +15,11 @@ except (ImportError, OSError):
 	osso = None
 
 import constants
-import util.coroutines as coroutines
 import util.go_utils as gobject_utils
-import util.tp_utils as telepathy_utils
 import util.misc as misc_utils
-import gvoice
 
 
 _moduleLogger = logging.getLogger(__name__)
-
-
-class NewGVConversations(object):
-
-	def __init__(self, connRef):
-		self._connRef = connRef
-		self.__callback = None
-
-	def start(self):
-		self.__callback = coroutines.func_sink(
-			coroutines.expand_positional(
-				self._on_conversations_updated
-			)
-		)
-		self._connRef().session.voicemails.updateSignalHandler.register_sink(
-			self.__callback
-		)
-		self._connRef().session.texts.updateSignalHandler.register_sink(
-			self.__callback
-		)
-
-	def stop(self):
-		if self.__callback is None:
-			_moduleLogger.info("New conversation monitor stopped without starting")
-			return
-		self._connRef().session.voicemails.updateSignalHandler.unregister_sink(
-			self.__callback
-		)
-		self._connRef().session.texts.updateSignalHandler.unregister_sink(
-			self.__callback
-		)
-		self.__callback = None
-
-	@misc_utils.log_exception(_moduleLogger)
-	def _on_conversations_updated(self, conv, conversationIds):
-		_moduleLogger.debug("Incoming messages from: %r" % (conversationIds, ))
-		for phoneNumber in conversationIds:
-			h = self._connRef().get_handle_by_name(telepathy.HANDLE_TYPE_CONTACT, phoneNumber)
-			# Just let the TextChannel decide whether it should be reported to the user or not
-			props = self._connRef().generate_props(telepathy.CHANNEL_TYPE_TEXT, h, False)
-			if self._connRef()._channel_manager.channel_exists(props):
-				continue
-
-			# Maemo 4.1's RTComm opens a window for a chat regardless if a
-			# message is received or not, so we need to do some filtering here
-			mergedConv = conv.get_conversation(phoneNumber)
-			newConversations = mergedConv.conversations
-			newConversations = gvoice.conversations.filter_out_read(newConversations)
-			newConversations = gvoice.conversations.filter_out_self(newConversations)
-			newConversations = list(newConversations)
-			if not newConversations:
-				continue
-
-			chan = self._connRef()._channel_manager.channel_for_props(props, signal=True)
-
-
-class RefreshVoicemail(object):
-
-	def __init__(self, connRef):
-		self._connRef = connRef
-		self._newChannelSignaller = telepathy_utils.NewChannelSignaller(self._on_new_channel)
-		self._outstandingRequests = []
-		self._isStarted = False
-
-	def start(self):
-		self._newChannelSignaller.start()
-		self._isStarted = True
-
-	def stop(self):
-		if not self._isStarted:
-			_moduleLogger.info("voicemail monitor stopped without starting")
-			return
-		_moduleLogger.info("Stopping voicemail refresh")
-		self._newChannelSignaller.stop()
-
-		# I don't want to trust whether the cancel happens within the current
-		# callback or not which could be the deciding factor between invalid
-		# iterators or infinite loops
-		localRequests = [r for r in self._outstandingRequests]
-		for request in localRequests:
-			localRequests.cancel()
-
-		self._isStarted = False
-
-	@misc_utils.log_exception(_moduleLogger)
-	def _on_new_channel(self, bus, serviceName, connObjectPath, channelObjectPath, channelType):
-		if channelType != telepathy.interfaces.CHANNEL_TYPE_STREAMED_MEDIA:
-			return
-
-		cmName = telepathy_utils.cm_from_path(connObjectPath)
-		if cmName == constants._telepathy_implementation_name_:
-			_moduleLogger.debug("Ignoring channels from self to prevent deadlock")
-			return
-
-		conn = telepathy.client.Connection(serviceName, connObjectPath)
-		try:
-			chan = telepathy.client.Channel(serviceName, channelObjectPath)
-		except dbus.exceptions.UnknownMethodException:
-			_moduleLogger.exception("Client might not have implemented a deprecated method")
-			return
-		missDetection = telepathy_utils.WasMissedCall(
-			bus, conn, chan, self._on_missed_call, self._on_error_for_missed
-		)
-		self._outstandingRequests.append(missDetection)
-
-	@misc_utils.log_exception(_moduleLogger)
-	def _on_missed_call(self, missDetection):
-		_moduleLogger.info("Missed a call")
-		self._connRef().session.voicemailsStateMachine.reset_timers()
-		self._outstandingRequests.remove(missDetection)
-
-	@misc_utils.log_exception(_moduleLogger)
-	def _on_error_for_missed(self, missDetection, reason):
-		_moduleLogger.debug("Error: %r claims %r" % (missDetection, reason))
-		self._outstandingRequests.remove(missDetection)
 
 
 class TimedDisconnect(object):
@@ -254,22 +135,3 @@ class DisconnectOnShutdown(object):
 			self._connRef().disconnect(telepathy.CONNECTION_STATUS_REASON_REQUESTED)
 		except Exception:
 			_moduleLogger.exception("Error durring disconnect")
-
-
-class DelayEnableContactIntegration(object):
-
-	def __init__(self, protocolName):
-		self.__enableSystemContactSupport = telepathy_utils.EnableSystemContactIntegration(
-			protocolName
-		)
-		self.__delayedEnable = gobject_utils.Async(self._on_delayed_enable)
-
-	def start(self):
-		self.__delayedEnable.start()
-
-	def stop(self):
-		self.__delayedEnable.cancel()
-
-	@misc_utils.log_exception(_moduleLogger)
-	def _on_delayed_enable(self):
-		self.__enableSystemContactSupport.start()

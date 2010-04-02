@@ -12,7 +12,6 @@ import telepathy
 import constants
 import tp
 import util.misc as misc_utils
-import gvoice
 
 
 _moduleLogger = logging.getLogger(__name__)
@@ -80,10 +79,6 @@ class DebugPromptChannel(tp.ChannelTypeText, cmd.Cmd):
 					machine.reset_timers()
 			elif args == "contacts":
 				self._conn.session.addressbookStateMachine.reset_timers()
-			elif args == "voicemail":
-				self._conn.session.voicemailsStateMachine.reset_timers()
-			elif args == "texts":
-				self._conn.session.textsStateMachine.reset_timers()
 			else:
 				self._report_new_message('Unknown machine "%s"' % (args, ))
 		except Exception, e:
@@ -119,12 +114,6 @@ class DebugPromptChannel(tp.ChannelTypeText, cmd.Cmd):
 		self._report_new_message("\n".join((
 			"Contacts:", repr(self._conn.session.addressbookStateMachine)
 		)))
-		self._report_new_message("\n".join((
-			"Voicemail:", repr(self._conn.session.voicemailsStateMachine)
-		)))
-		self._report_new_message("\n".join((
-			"Texts:", repr(self._conn.session.textsStateMachine)
-		)))
 
 	def help_get_polling(self):
 		self._report_new_message("Prints the frequency each of the state machines updates")
@@ -136,139 +125,9 @@ class DebugPromptChannel(tp.ChannelTypeText, cmd.Cmd):
 		self._report_new_message("\n".join((
 			"Contacts:", str(self._conn.session.addressbookStateMachine)
 		)))
-		self._report_new_message("\n".join((
-			"Voicemail:", str(self._conn.session.voicemailsStateMachine)
-		)))
-		self._report_new_message("\n".join((
-			"Texts:", str(self._conn.session.textsStateMachine)
-		)))
 
 	def help_get_state_status(self):
 		self._report_new_message("Prints the current setting for the state machines")
-
-	def do_is_authed(self, args):
-		if args:
-			self._report_new_message("No arguments supported")
-			return
-
-		try:
-			isAuthed = self._conn.session.backend.is_authed()
-			self._report_new_message(str(isAuthed))
-		except Exception, e:
-			self._report_new_message(str(e))
-
-	def help_is_authed(self):
-		self._report_new_message("Print whether logged in to Google Voice")
-
-	def do_is_dnd(self, args):
-		if args:
-			self._report_new_message("No arguments supported")
-			return
-
-		try:
-			isDnd = self._conn.session.backend.is_dnd()
-			self._report_new_message(str(isDnd))
-		except Exception, e:
-			self._report_new_message(str(e))
-
-	def help_is_dnd(self):
-		self._report_new_message("Print whether Do-Not-Disturb mode enabled on the Google Voice account")
-
-	def do_get_account_number(self, args):
-		if args:
-			self._report_new_message("No arguments supported")
-			return
-
-		try:
-			number = self._conn.session.backend.get_account_number()
-			self._report_new_message(number)
-		except Exception, e:
-			self._report_new_message(str(e))
-
-	def help_get_account_number(self):
-		self._report_new_message("Print the Google Voice account number")
-
-	def do_get_callback_numbers(self, args):
-		if args:
-			self._report_new_message("No arguments supported")
-			return
-
-		try:
-			numbers = self._conn.session.backend.get_callback_numbers()
-			numbersDisplay = "\n".join(
-				"%s: %s" % (name, number)
-				for (number, name) in numbers.iteritems()
-			)
-			self._report_new_message(numbersDisplay)
-		except Exception, e:
-			self._report_new_message(str(e))
-
-	def help_get_callback_numbers(self):
-		self._report_new_message("Print a list of all configured callback numbers")
-
-	def do_get_sane_callback_number(self, args):
-		if args:
-			self._report_new_message("No arguments supported")
-			return
-
-		try:
-			number = gvoice.backend.get_sane_callback(self._conn.session.backend)
-			self._report_new_message(number)
-		except Exception, e:
-			self._report_new_message(str(e))
-
-	def help_get_sane_callback_number(self):
-		self._report_new_message("Print the best guess of callback numbers to use")
-
-	def do_get_callback_number(self, args):
-		if args:
-			self._report_new_message("No arguments supported")
-			return
-
-		try:
-			number = self._conn.session.backend.get_callback_number()
-			self._report_new_message(number)
-		except Exception, e:
-			self._report_new_message(str(e))
-
-	def help_get_callback_number(self):
-		self._report_new_message("Print the callback number currently enabled")
-
-	def do_call(self, args):
-		if not args:
-			self._report_new_message("Must specify the phone number and only the phone nunber")
-			return
-
-		try:
-			number = args
-			self._conn.session.backend.call(number)
-		except Exception, e:
-			self._report_new_message(str(e))
-
-	def help_call(self):
-		self._report_new_message("\n".join(["call NUMBER", "Initiate a callback, Google forwarding the call to the callback number"]))
-
-	def do_send_sms(self, args):
-		args = args.split(" ")
-		if 1 < len(args):
-			self._report_new_message("Must specify the phone number and then message")
-			return
-
-		try:
-			number = args[0]
-			message = " ".join(args[1:])
-			self._conn.session.backend.send_sms([number], message)
-		except Exception, e:
-			self._report_new_message(str(e))
-
-	def help_send_sms(self):
-		self._report_new_message("\n".join(["send_sms NUMBER MESSAGE0 MESSAGE1 ...", "Send an sms to number NUMBER"]))
-
-	def do_version(self, args):
-		if args:
-			self._report_new_message("No arguments supported")
-			return
-		self._report_new_message("%s-%s" % (constants.__version__, constants.__build__))
 
 	def help_version(self):
 		self._report_new_message("Prints the version (hint: %s-%s)" % (constants.__version__, constants.__build__))

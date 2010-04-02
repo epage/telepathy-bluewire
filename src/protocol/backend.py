@@ -28,7 +28,7 @@ _moduleLogger = logging.getLogger(__name__)
 CHAT_PROTOCOL = 0x1001
 
 
-class BluetoothConnection(object):
+class BluetoothConnection(gobject.GObject):
 
 	__gsignals__ = {
 		'data_ready' : (
@@ -126,7 +126,7 @@ class BluetoothListener(gobject.GObject):
 gobject.type_register(BluetoothListener)
 
 
-class BluetoothBackend(object):
+class BluetoothBackend(gobject.GObject):
 
 	__gsignals__ = {
 		'login' : (
