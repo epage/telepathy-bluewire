@@ -11,7 +11,7 @@ import util.misc as misc_utils
 import protocol
 import handle
 
-#import aliasing
+import aliasing
 #import avatars
 #import capabilities
 #import contacts
@@ -36,13 +36,12 @@ class BluewireOptions(object):
 	def __init__(self, parameters = None):
 		if parameters is None:
 			return
-		self.useGVContacts = parameters["use-gv-contacts"]
 		self.contactsPollPeriodInHours = parameters['contacts-poll-period-in-hours']
 
 
 class BluewireConnection(
 	tp.Connection,
-	#aliasing.AliasingMixin,
+	aliasing.AliasingMixin,
 	#avatars.AvatarsMixin,
 	#capabilities.CapabilitiesMixin,
 	#contacts.ContactsMixin,
@@ -81,7 +80,7 @@ class BluewireConnection(
 			"device",
 			constants._telepathy_implementation_name_
 		)
-		#aliasing.AliasingMixin.__init__(self)
+		aliasing.AliasingMixin.__init__(self)
 		#avatars.AvatarsMixin.__init__(self)
 		#capabilities.CapabilitiesMixin.__init__(self)
 		#contacts.ContactsMixin.__init__(self)
@@ -111,12 +110,8 @@ class BluewireConnection(
 		return self.__session
 
 	@property
-	def options(self):
-		return self.__options
-
-	@property
 	def username(self):
-		return self.__credentials[0]
+		return "device"
 
 	@property
 	def callbackNumberParameter(self):
@@ -157,11 +152,9 @@ class BluewireConnection(
 			telepathy.CONNECTION_STATUS_REASON_REQUESTED
 		)
 		try:
-			self.__session.load(self.__cachePath)
-
 			for plumber in self._plumbing:
 				plumber.start()
-			self.session.login(*self.__credentials)
+			self.session.login()
 
 			subscribeHandle = self.get_handle_by_name(telepathy.HANDLE_TYPE_LIST, "subscribe")
 			subscribeProps = self.generate_props(telepathy.CHANNEL_TYPE_CONTACT_LIST, subscribeHandle, False)
@@ -244,7 +237,6 @@ class BluewireConnection(
 		self.__channelManager.close()
 		self.manager.disconnected(self)
 
-		self.session.save(self.__cachePath)
 		self.session.logout()
 		self.session.close()
 

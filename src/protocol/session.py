@@ -53,8 +53,6 @@ class Session(object):
 
 		self._masterStateMachine = state_machine.MasterStateMachine()
 		self._masterStateMachine.append_machine(self._addressbookStateMachine)
-		self._masterStateMachine.append_machine(self._voicemailsStateMachine)
-		self._masterStateMachine.append_machine(self._textsStateMachine)
 
 		self._lastDndCheck = 0
 		self._cachedIsDnd = False

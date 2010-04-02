@@ -34,16 +34,17 @@ class BluetoothConnection(gobject.GObject):
 		'data_ready' : (
 			gobject.SIGNAL_RUN_LAST,
 			gobject.TYPE_NONE,
-			(gobject.TYPE_STRING, gobject.TYPE_OBJECT),
+			(),
 		),
 		'closed' : (
 			gobject.SIGNAL_RUN_LAST,
 			gobject.TYPE_NONE,
-			(gobject.TYPE_OBJECT, ),
+			(),
 		),
 	}
 
 	def __init__(self, socket, addr, psm):
+		gobject.GObject.__init__(self)
 		self._socket = socket
 		self._address = addr
 		self._dataId = gobject.io_add_watch (self._socket, gobject.IO_IN, self._on_data)
@@ -55,7 +56,7 @@ class BluetoothConnection(gobject.GObject):
 
 		self._socket.close()
 		self._socket = None
-		self.emit("closed", self)
+		self.emit("closed")
 
 	@property
 	def socket(self):
@@ -70,7 +71,7 @@ class BluetoothConnection(gobject.GObject):
 		return self._address
 
 	def _on_data(self, source, condition):
-		self.emit("data_ready", self)
+		self.emit("data_ready")
 
 
 gobject.type_register(BluetoothConnection)
@@ -82,12 +83,12 @@ class BluetoothListener(gobject.GObject):
 		'incoming' : (
 			gobject.SIGNAL_RUN_LAST,
 			gobject.TYPE_NONE,
-			(gobject.TYPE_OBJECT, ),
+			(gobject.TYPE_PYOBJECT, ),
 		),
 		'closed' : (
 			gobject.SIGNAL_RUN_LAST,
 			gobject.TYPE_NONE,
-			(gobject.TYPE_OBJECT, ),
+			(),
 		),
 	}
 
@@ -110,7 +111,7 @@ class BluetoothListener(gobject.GObject):
 
 		self._socket.close()
 		self._socket = None
-		self.emit("closed", self)
+		self.emit("closed")
 
 	@property
 	def socket(self):
@@ -132,21 +133,22 @@ class BluetoothBackend(gobject.GObject):
 		'login' : (
 			gobject.SIGNAL_RUN_LAST,
 			gobject.TYPE_NONE,
-			(gobject.TYPE_OBJECT, ),
+			(),
 		),
 		'logout' : (
 			gobject.SIGNAL_RUN_LAST,
 			gobject.TYPE_NONE,
-			(gobject.TYPE_OBJECT, ),
+			(),
 		),
 		'incoming' : (
 			gobject.SIGNAL_RUN_LAST,
 			gobject.TYPE_NONE,
-			(gobject.TYPE_OBJECT, ),
+			(gobject.TYPE_PYOBJECT, ),
 		),
 	}
 
 	def __init__(self):
+		gobject.GObject.__init__(self)
 		self._timeout = 10
 		self._listeners = {}
 		self._listenerIds = {}
@@ -156,18 +158,18 @@ class BluetoothBackend(gobject.GObject):
 		self._listenerIds[CHAT_PROTOCOL] = self._listeners[CHAT_PROTOCOL].connect(
 			"incoming", self._on_incoming
 		)
-		self.emit("login", self)
+		self.emit("login")
 
 	def logout(self):
-		for protocol in self._listeners.keys:
+		for protocol in self._listeners.iterkeys():
 			listener = self._listeners[protocol]
 			listenerId = self._listenerIds[protocol]
 
-			listener.disconnect(self._listenerIds)
+			listener.disconnect(listenerId)
 			listener.close()
-		del self._listeners[:]
-		del self._listenerIds[:]
-		self.emit("logout", self)
+		self._listeners.clear()
+		self._listenerIds.clear()
+		self.emit("logout")
 
 	def is_logged_in(self):
 		if self._listeners:

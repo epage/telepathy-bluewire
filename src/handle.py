@@ -4,7 +4,6 @@ import weakref
 import telepathy
 
 import tp
-import util.misc as misc_utils
 
 
 _moduleLogger = logging.getLogger(__name__)
@@ -41,16 +40,16 @@ class ConnectionHandle(BluewireHandle):
 
 class ContactHandle(BluewireHandle):
 
-	def __init__(self, connection, id, phoneNumber):
-		self._phoneNumber = misc_utils.normalize_number(phoneNumber)
+	def __init__(self, connection, id, address):
+		self._address = address
 
 		handleType = telepathy.HANDLE_TYPE_CONTACT
-		handleName = self._phoneNumber
+		handleName = self._address
 		BluewireHandle.__init__(self, connection, id, handleType, handleName)
 
 	@property
-	def phoneNumber(self):
-		return self._phoneNumber
+	def address(self):
+		return self._address
 
 
 class ListHandle(BluewireHandle):

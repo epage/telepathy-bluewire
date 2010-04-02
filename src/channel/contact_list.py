@@ -28,14 +28,11 @@ class AllContactsListChannel(
 		self.__listHandle = listHandle
 		self.__members = set()
 
-		if self._conn.options.useGVContacts:
-			self.__updateId = self.__session.addressbook.connect("contacts_changed", self._on_contacts_refreshed)
+		self.__updateId = self.__session.addressbook.connect("contacts_changed", self._on_contacts_refreshed)
 
-			addressbook = connection.session.addressbook
-			contacts = addressbook.get_numbers()
-			self._process_refresh(addressbook, set(contacts), set(), set())
-		else:
-			self.__updateId = None
+		addressbook = connection.session.addressbook
+		contacts = addressbook.get_addresses()
+		self._process_refresh(addressbook, set(contacts), set(), set())
 
 		self.GroupFlagsChanged(0, 0)
 
@@ -46,9 +43,8 @@ class AllContactsListChannel(
 
 	def close(self):
 		_moduleLogger.debug("Closing contact list")
-		if self.__updateId is not None:
-			self.__session.addressbook.updateSignalHandler.disconnect(self.__updateId)
-			self.__updateId = None
+		self.__session.addressbook.updateSignalHandler.disconnect(self.__updateId)
+		self.__updateId = None
 
 		tp.ChannelTypeContactList.Close(self)
 		self.remove_from_connection()

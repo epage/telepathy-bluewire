@@ -22,6 +22,13 @@ class AliasingMixin(tp.ConnectionInterfaceAliasing):
 		"""
 		raise NotImplementedError("Abstract property called")
 
+	@property
+	def username(self):
+		"""
+		@abstract
+		"""
+		raise NotImplementedError("Abstract property called")
+
 	def get_handle_by_id(self, handleType, handleId):
 		"""
 		@abstract
@@ -50,40 +57,15 @@ class AliasingMixin(tp.ConnectionInterfaceAliasing):
 	@misc_utils.log_exception(_moduleLogger)
 	def SetAliases(self, aliases):
 		_moduleLogger.debug("Called SetAliases")
-		# first validate that no other handle types are included
-		handleId, alias = None, None
-		for handleId, alias in aliases.iteritems():
-			h = self.get_handle_by_id(telepathy.HANDLE_TYPE_CONTACT, handleId)
-			if isinstance(h, handle.ConnectionHandle):
-				break
-		else:
-			raise telepathy.errors.PermissionDenied("No user customizable aliases")
-
-		uglyNumber = misc_utils.normalize_number(alias)
-		if len(uglyNumber) == 0:
-			# Reset to the original from login if one was provided
-			uglyNumber = self.callbackNumberParameter
-		if not misc_utils.is_valid_number(uglyNumber):
-			raise telepathy.errors.InvalidArgument("Invalid phone number %r" % (uglyNumber, ))
-
-		# Update callback
-		self.session.backend.set_callback_number(uglyNumber)
-
-		# Inform of change
-		userAlias = make_pretty(uglyNumber)
-		changedAliases = ((handleId, userAlias), )
-		self.AliasesChanged(changedAliases)
+		raise telepathy.errors.PermissionDenied("No user customizable aliases")
 
 	def _get_alias(self, handleId):
 		h = self.get_handle_by_id(telepathy.HANDLE_TYPE_CONTACT, handleId)
 		if isinstance(h, handle.ConnectionHandle):
-			aliasNumber = self.session.backend.get_callback_number()
-			userAlias = make_pretty(aliasNumber)
-			return userAlias
+			return self.username
 		else:
-			number = h.phoneNumber
 			try:
-				contactAlias = self.session.addressbook.get_contact_name(number)
+				contactAlias = self.session.addressbook.get_contact_name(h.address)
 			except KeyError:
-				contactAlias = make_pretty(number)
+				contactAlias = h.address
 			return contactAlias
