@@ -81,6 +81,7 @@ def build_package(distribution):
 		"python-dbus | python2.5-dbus",
 		"python-gobject | python2.5-gobject",
 		"python-telepathy | python2.5-telepathy",
+		"python-bluez",
 	])
 	p.depends += {
 		"debian": "",
