@@ -21,14 +21,29 @@ import util.misc as misc_utils
 _moduleLogger = logging.getLogger(__name__)
 
 
-# The L2CAP spec (page. 278) say "PSM values are separated into two ranges.
-# Values in the first range are assigned by the Bluetooth SIG and indicate
-# protocols. The second range of values [0x1001 - 0xffff] are dynamically
-# allocated and used in conjunction with the Service Discovery Protocol (SDP).
-# The dynamically assigned values may be used to support multiple
-# implementations of a particular protocol, e.g., RFCOMM, residing on top of
-# L2CAP or for prototyping an experimental protocol."
-CHAT_PROTOCOL = 0x1001
+CHAT_PROTOCOL = "70588c91-aa22-4362-9834-46a8a5d4ef91"
+FILE_PROTOCOL = "8ab24436-129f-4200-9d89-261dc2a838b0"
+STREAM_PROTOCOL = "d3dd6f6d-52a7-44a3-aef9-f6de2e92b0a2"
+MEDIA_PROTOCOL = "135f6410-ffa0-4ed5-b1c4-5d8b88f0a3ea"
+
+PROTOCOL_DATA = {
+	CHAT_PROTOCOL: {
+		"transport": bluetooth.L2CAP,
+		"name": "Chat",
+	},
+	FILE_PROTOCOL: {
+		"transport": bluetooth.L2CAP,
+		"name": "File",
+	},
+	STREAM_PROTOCOL: {
+		"transport": bluetooth.L2CAP,
+		"name": "Streamed Data",
+	},
+	MEDIA_PROTOCOL: {
+		"transport": bluetooth.L2CAP,
+		"name": "Streamed Media",
+	},
+}
 
 
 class _BluetoothConnection(gobject.GObject):
@@ -46,12 +61,12 @@ class _BluetoothConnection(gobject.GObject):
 		),
 	}
 
-	def __init__(self, socket, addr, psm):
+	def __init__(self, socket, addr, uuid):
 		gobject.GObject.__init__(self)
 		self._socket = socket
 		self._address = addr
 		self._dataId = gobject.io_add_watch (self._socket, gobject.IO_IN, self._on_data)
-		self._psm = psm
+		self._uuid = uuid
 
 	def close(self):
 		gobject.source_remove(self._dataId)
@@ -66,12 +81,12 @@ class _BluetoothConnection(gobject.GObject):
 		return self._socket
 
 	@property
-	def protocol(self):
-		return self._psm
-
-	@property
 	def address(self):
 		return self._address
+
+	@property
+	def protocol(self):
+		return self._uuid
 
 	@misc_utils.log_exception(_moduleLogger)
 	def _on_data(self, source, condition):
@@ -97,23 +112,27 @@ class _BluetoothListener(gobject.GObject):
 		),
 	}
 
-	def __init__(self, psm, timeout):
+	def __init__(self, uuid, transport, timeout):
 		gobject.GObject.__init__(self)
 		self._timeout = timeout
-		self._psm = psm
+		self._uuid = uuid
+		self._transport = transport
 
-		self._socket = bluetooth.BluetoothSocket(bluetooth.L2CAP)
+		self._socket = bluetooth.BluetoothSocket(self._transport)
 		self._socket.settimeout(self._timeout)
-		self._socket.bind(("",self._psm))
+		self._socket.bind(("", bluetooth.PORT_ANY))
 		self._socket.listen(1)
 		self._incomingId = gobject.io_add_watch(
 			self._socket, gobject.IO_IN, self._on_incoming
 		)
 
+		bluetooth.advertise_service(self._socket, PROTOCOL_DATA[uuid]["name"], uuid)
+
 	def close(self):
 		gobject.source_remove(self._incomingId)
 		self._incomingId = None
 
+		bluetooth.stop_advertising(self._socket)
 		self._socket.close()
 		self._socket = None
 		self.emit("closed")
@@ -124,9 +143,9 @@ class _BluetoothListener(gobject.GObject):
 
 	@misc_utils.log_exception(_moduleLogger)
 	def _on_incoming(self, source, condition):
-		newSocket, (address, psm) = self._socket.accept()
+		newSocket, (address, port) = self._socket.accept()
 		newSocket.settimeout(self._timeout)
-		connection = _BluetoothConnection(newSocket, address, self._psm)
+		connection = _BluetoothConnection(newSocket, address, self._uuid)
 		self.emit("incoming", connection)
 		return True
 
@@ -211,10 +230,11 @@ class BluetoothBackend(gobject.GObject):
 
 	def login(self):
 		self._disco = _DeviceDiscoverer()
-		self._listeners[CHAT_PROTOCOL] = _BluetoothListener(CHAT_PROTOCOL, self._timeout)
-		self._listenerIds[CHAT_PROTOCOL] = self._listeners[CHAT_PROTOCOL].connect(
-			"incoming", self._on_incoming
-		)
+		for protocol, data in PROTOCOL_DATA.iteritems():
+			self._listeners[protocol] = _BluetoothListener(protocol, data["transport"], self._timeout)
+			self._listenerIds[protocol] = self._listeners[protocol].connect(
+				"incoming", self._on_incoming
+			)
 		self.emit("login")
 
 	def logout(self):
@@ -253,16 +273,20 @@ class BluetoothBackend(gobject.GObject):
 
 		return self._disco.devices
 
-	def connect(self, addr, protocol):
-		sock = bluetooth.BluetoothSocket(bluetooth.L2CAP)
+	def get_contact_services(self, address):
+		services = bluetooth.find_service(address = address)
+		return services
+
+	def connect(self, addr, transport, port):
+		sock = bluetooth.BluetoothSocket(transport)
 		sock.settimeout(self._timeout)
 		try:
-			sock.connect((addr, protocol))
+			sock.connect((addr, port))
 		except bluetooth.error, e:
 			sock.close()
 			raise
 
-		return _BluetoothConnection(sock, addr, protocol)
+		return _BluetoothConnection(sock, addr, "")
 
 	@misc_utils.log_exception(_moduleLogger)
 	def _on_incoming(self, connection):
