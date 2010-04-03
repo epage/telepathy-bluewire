@@ -73,6 +73,8 @@ def run_bluewire(persist):
 
 	mainloop = gobject.MainLoop(is_running=True)
 
+	gobject.threads_init()
+	dbus.glib.init_threads()
 	while mainloop.is_running():
 		try:
 			mainloop.run()
