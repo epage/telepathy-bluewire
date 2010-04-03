@@ -6,6 +6,9 @@ import backend
 import addressbook
 import state_machine
 
+import util.go_utils as gobject_utils
+import util.misc as misc_utils
+
 
 _moduleLogger = logging.getLogger(__name__)
 
@@ -28,6 +31,7 @@ class Session(object):
 				elif quant < 0:
 					defaults[key] = (state_machine.UpdateStateMachine.INFINITE_PERIOD, unit)
 
+		self._asyncPool = gobject_utils.AsyncPool()
 		self._backend = backend.BluetoothBackend()
 
 		if defaults["contacts"][0] == state_machine.UpdateStateMachine.INFINITE_PERIOD:
@@ -36,7 +40,7 @@ class Session(object):
 			contactsPeriodInSeconds = state_machine.to_seconds(
 				**{defaults["contacts"][1]: defaults["contacts"][0],}
 			)
-		self._addressbook = addressbook.Addressbook(self._backend)
+		self._addressbook = addressbook.Addressbook(self._backend, self._asyncPool)
 		self._addressbookStateMachine = state_machine.UpdateStateMachine([self.addressbook], "Addressbook")
 		self._addressbookStateMachine.set_state_strategy(
 			state_machine.StateMachine.STATE_DND,
@@ -60,12 +64,29 @@ class Session(object):
 	def close(self):
 		self._masterStateMachine.close()
 
-	def login(self):
-		self._backend.login()
+	def login(self, on_success, on_error):
+		self._asyncPool.start()
+
+		le = gobject_utils.AsyncLinearExecution(self._asyncPool, self._login)
+		le.start(on_success, on_error)
+
+	@misc_utils.log_exception(_moduleLogger)
+	def _login(self, on_success, on_error):
+		try:
+			isLoggedIn = yield (
+				self._backend.login,
+				(),
+				{},
+			)
+		except Exception, e:
+			on_error(e)
+			return
 
 		self._masterStateMachine.start()
+		on_success(isLoggedIn)
 
 	def logout(self):
+		self._asyncPool.stop()
 		self._masterStateMachine.stop()
 		self._backend.logout()
 

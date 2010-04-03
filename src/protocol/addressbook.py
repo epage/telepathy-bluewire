@@ -5,6 +5,9 @@ import logging
 
 import gobject
 
+import util.misc as misc_utils
+import util.go_utils as gobject_utils
+
 
 _moduleLogger = logging.getLogger(__name__)
 
@@ -19,19 +22,30 @@ class Addressbook(gobject.GObject):
 		),
 	}
 
-	def __init__(self, backend):
+	def __init__(self, backend, asyncPool):
 		gobject.GObject.__init__(self)
 		self._backend = backend
 		self._addresses = {}
+		self._asyncPool = asyncPool
 
 	def update(self, force=False):
 		if not force and self._addresses:
 			return
+
+		le = gobject_utils.AsyncLinearExecution(self._asyncPool, self._update)
+		le.start()
+
+	@misc_utils.log_exception(_moduleLogger)
+	def _update(self):
+		contacts = yield (
+			self._backend.get_contacts,
+			(),
+			{},
+		)
 		oldContacts = self._addresses
 		oldContactAddresses = set(self.get_addresses())
 
-		self._addresses = {}
-		self._populate_contacts()
+		self._addresses = self._populate_contacts(contacts)
 		newContactAddresses = set(self.get_addresses())
 
 		addedContacts = newContactAddresses - oldContactAddresses
@@ -52,14 +66,15 @@ class Addressbook(gobject.GObject):
 	def get_contact_name(self, address):
 		return self._addresses[address]["name"]
 
-	def _populate_contacts(self):
-		if self._addresses:
-			return
-		contacts = self._backend.get_contacts()
-		for address, name in contacts:
-			self._addresses[address] = {
-				"name": name
+	def _populate_contacts(self, contacts):
+		addresses = {}
+		for address, deviceclass, name in contacts:
+			_moduleLogger.debug("%r %r %r" % (address, deviceclass, name))
+			addresses[address] = {
+				"name": name,
+				"class": deviceclass,
 			}
+		return addresses
 
 
 gobject.type_register(Addressbook)

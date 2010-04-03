@@ -95,7 +95,6 @@ class BluewireConnection(
 		self._plumbing = [
 			autogv.AutoDisconnect(weakref.ref(self)),
 		]
-		self._delayedConnect = gobject_utils.Async(self._delayed_connect)
 
 		_moduleLogger.info("Connection created")
 		self._timedDisconnect = autogv.TimedDisconnect(weakref.ref(self))
@@ -140,21 +139,23 @@ class BluewireConnection(
 		if self._status != telepathy.CONNECTION_STATUS_DISCONNECTED:
 			_moduleLogger.info("Attempting connect when not disconnected")
 			return
-		_moduleLogger.info("Kicking off connect")
-		self._delayedConnect.start()
-		self._timedDisconnect.stop()
-
-	@misc_utils.log_exception(_moduleLogger)
-	def _delayed_connect(self):
 		_moduleLogger.info("Connecting...")
 		self.StatusChanged(
 			telepathy.CONNECTION_STATUS_CONNECTING,
 			telepathy.CONNECTION_STATUS_REASON_REQUESTED
 		)
+		self._timedDisconnect.stop()
+		self.session.login(
+			self._on_login,
+			self._on_login_error,
+		)
+
+	@misc_utils.log_exception(_moduleLogger)
+	def _on_login(self, *args):
+		_moduleLogger.info("Connected, setting up...")
 		try:
 			for plumber in self._plumbing:
 				plumber.start()
-			self.session.login()
 
 			subscribeHandle = self.get_handle_by_name(telepathy.HANDLE_TYPE_LIST, "subscribe")
 			subscribeProps = self.generate_props(telepathy.CHANNEL_TYPE_CONTACT_LIST, subscribeHandle, False)
@@ -163,15 +164,23 @@ class BluewireConnection(
 			publishProps = self.generate_props(telepathy.CHANNEL_TYPE_CONTACT_LIST, publishHandle, False)
 			self.__channelManager.channel_for_props(publishProps, signal=True)
 		except Exception:
-			_moduleLogger.exception("Connection Failed")
+			_moduleLogger.exception("Setup failed")
 			self.disconnect(telepathy.CONNECTION_STATUS_REASON_AUTHENTICATION_FAILED)
 			return
 
-		_moduleLogger.info("Connected")
+		_moduleLogger.info("Connected and set up")
 		self.StatusChanged(
 			telepathy.CONNECTION_STATUS_CONNECTED,
 			telepathy.CONNECTION_STATUS_REASON_REQUESTED
 		)
+
+	@misc_utils.log_exception(_moduleLogger)
+	def _on_login_error(self, error):
+		_moduleLogger.error(error)
+		if isinstance(error, gvoice.backend.NetworkError):
+			self.disconnect(telepathy.CONNECTION_STATUS_REASON_NETWORK_ERROR)
+		else:
+			self.disconnect(telepathy.CONNECTION_STATUS_REASON_AUTHENTICATION_FAILED)
 
 	@misc_utils.log_exception(_moduleLogger)
 	def Disconnect(self):
@@ -221,7 +230,6 @@ class BluewireConnection(
 	def disconnect(self, reason):
 		_moduleLogger.info("Disconnecting")
 
-		self._delayedConnect.cancel()
 		self._timedDisconnect.stop()
 
 		# Not having the disconnect first can cause weird behavior with clients
