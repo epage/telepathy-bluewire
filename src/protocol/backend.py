@@ -61,12 +61,12 @@ class _BluetoothConnection(gobject.GObject):
 		),
 	}
 
-	def __init__(self, socket, addr, uuid):
+	def __init__(self, socket, addr, protocol):
 		gobject.GObject.__init__(self)
 		self._socket = socket
 		self._address = addr
 		self._dataId = gobject.io_add_watch (self._socket, gobject.IO_IN, self._on_data)
-		self._uuid = uuid
+		self._protocol = protocol
 
 	def close(self):
 		gobject.source_remove(self._dataId)
@@ -86,7 +86,7 @@ class _BluetoothConnection(gobject.GObject):
 
 	@property
 	def protocol(self):
-		return self._uuid
+		return self._protocol
 
 	@misc_utils.log_exception(_moduleLogger)
 	def _on_data(self, source, condition):
@@ -112,13 +112,12 @@ class _BluetoothListener(gobject.GObject):
 		),
 	}
 
-	def __init__(self, uuid, transport, timeout):
+	def __init__(self, protocol, timeout):
 		gobject.GObject.__init__(self)
 		self._timeout = timeout
-		self._uuid = uuid
-		self._transport = transport
+		self._protocol = protocol
 
-		self._socket = bluetooth.BluetoothSocket(self._transport)
+		self._socket = bluetooth.BluetoothSocket(self._protocol["transport"])
 		self._socket.settimeout(self._timeout)
 		self._socket.bind(("", bluetooth.PORT_ANY))
 		self._socket.listen(1)
@@ -126,7 +125,7 @@ class _BluetoothListener(gobject.GObject):
 			self._socket, gobject.IO_IN, self._on_incoming
 		)
 
-		bluetooth.advertise_service(self._socket, PROTOCOL_DATA[uuid]["name"], uuid)
+		bluetooth.advertise_service(self._socket, self._protocol["name"], self._protocol["uuid"])
 
 	def close(self):
 		gobject.source_remove(self._incomingId)
@@ -145,7 +144,7 @@ class _BluetoothListener(gobject.GObject):
 	def _on_incoming(self, source, condition):
 		newSocket, (address, port) = self._socket.accept()
 		newSocket.settimeout(self._timeout)
-		connection = _BluetoothConnection(newSocket, address, self._uuid)
+		connection = _BluetoothConnection(newSocket, address, self._protocol)
 		self.emit("incoming", connection)
 		return True
 
@@ -155,8 +154,10 @@ gobject.type_register(_BluetoothListener)
 
 class _DeviceDiscoverer(bluetooth.DeviceDiscoverer):
 
-	def __init__(self):
+	def __init__(self, timeout):
 		bluetooth.DeviceDiscoverer.__init__(self)
+		self._timeout = timeout
+
 		self._devices = []
 		self._devicesInProgress = []
 
@@ -176,11 +177,10 @@ class _DeviceDiscoverer(bluetooth.DeviceDiscoverer):
 		# The default impl calls into some hci code but an example used select,
 		# so going with the example
 
-		readfiles = [self, ]
 		while self.is_inquiring or 0 < len(self.names_to_find):
 			# The whole reason for overriding this
 			_moduleLogger.debug("Event (%r, %r)"% (self.is_inquiring, self.names_to_find))
-			rfds = select.select(readfiles, [], [])[0]
+			rfds = select.select([self], [], [], self._timeout)[0]
 			if self in rfds:
 				self.process_event()
 
@@ -227,20 +227,27 @@ class BluetoothBackend(gobject.GObject):
 		self._timeout = 8
 		self._listeners = {}
 		self._listenerIds = {}
+		self._protocols = []
+
+	def add_protocol(self, protocol):
+		assert not self.is_logged_in()
+		self._protocols.append(protocol)
 
 	def login(self):
-		self._disco = _DeviceDiscoverer()
-		for protocol, data in PROTOCOL_DATA.iteritems():
-			self._listeners[protocol] = _BluetoothListener(protocol, data["transport"], self._timeout)
-			self._listenerIds[protocol] = self._listeners[protocol].connect(
+		self._disco = _DeviceDiscoverer(self._timeout)
+		for protocol in self._protocols:
+			protoId = protocol["uuid"]
+			self._listeners[protoId] = _BluetoothListener(protocol, self._timeout)
+			self._listenerIds[protoId] = self._listeners[protoId].connect(
 				"incoming", self._on_incoming
 			)
 		self.emit("login")
 
 	def logout(self):
-		for protocol in self._listeners.iterkeys():
-			listener = self._listeners[protocol]
-			listenerId = self._listenerIds[protocol]
+		for protocol in self._protocols:
+			protoId = protocol["uuid"]
+			listener = self._listeners[protoId]
+			listenerId = self._listenerIds[protoId]
 
 			listener.disconnect(listenerId)
 			listener.close()
