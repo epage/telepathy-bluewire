@@ -5,7 +5,7 @@ import telepathy
 import util.misc as misc_utils
 import tp
 import handle
-import gvoice.state_machine as state_machine
+import protocol.state_machine as state_machine
 
 
 _moduleLogger = logging.getLogger(__name__)

@@ -236,12 +236,8 @@ class BluetoothBackend(gobject.GObject):
 		for protocol in self._protocols:
 			protoId = protocol["uuid"]
 			listener = self._listeners[protoId]
-			listenerId = self._listenerIds[protoId]
-
-			listener.disconnect(listenerId)
 			listener.close()
 		self._listeners.clear()
-		self._listenerIds.clear()
 		self._disco.cancel_inquiry() # precaution
 		self.emit("logout")
 
