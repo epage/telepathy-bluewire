@@ -21,31 +21,6 @@ import util.misc as misc_utils
 _moduleLogger = logging.getLogger(__name__)
 
 
-CHAT_PROTOCOL = "70588c91-aa22-4362-9834-46a8a5d4ef91"
-FILE_PROTOCOL = "8ab24436-129f-4200-9d89-261dc2a838b0"
-STREAM_PROTOCOL = "d3dd6f6d-52a7-44a3-aef9-f6de2e92b0a2"
-MEDIA_PROTOCOL = "135f6410-ffa0-4ed5-b1c4-5d8b88f0a3ea"
-
-PROTOCOL_DATA = {
-	CHAT_PROTOCOL: {
-		"transport": bluetooth.L2CAP,
-		"name": "Chat",
-	},
-	FILE_PROTOCOL: {
-		"transport": bluetooth.L2CAP,
-		"name": "File",
-	},
-	STREAM_PROTOCOL: {
-		"transport": bluetooth.L2CAP,
-		"name": "Streamed Data",
-	},
-	MEDIA_PROTOCOL: {
-		"transport": bluetooth.L2CAP,
-		"name": "Streamed Media",
-	},
-}
-
-
 class _BluetoothConnection(gobject.GObject):
 
 	__gsignals__ = {
@@ -100,12 +75,17 @@ gobject.type_register(_BluetoothConnection)
 class _BluetoothListener(gobject.GObject):
 
 	__gsignals__ = {
-		'incoming' : (
+		'incoming_connection' : (
 			gobject.SIGNAL_RUN_LAST,
 			gobject.TYPE_NONE,
 			(gobject.TYPE_PYOBJECT, ),
 		),
-		'closed' : (
+		'start_listening' : (
+			gobject.SIGNAL_RUN_LAST,
+			gobject.TYPE_NONE,
+			(),
+		),
+		'stop_listening' : (
 			gobject.SIGNAL_RUN_LAST,
 			gobject.TYPE_NONE,
 			(),
@@ -116,7 +96,11 @@ class _BluetoothListener(gobject.GObject):
 		gobject.GObject.__init__(self)
 		self._timeout = timeout
 		self._protocol = protocol
+		self._socket = None
+		self._incomingId = None
 
+	def start(self):
+		assert self._socket is None and self._incomingId is None
 		self._socket = bluetooth.BluetoothSocket(self._protocol["transport"])
 		self._socket.settimeout(self._timeout)
 		self._socket.bind(("", bluetooth.PORT_ANY))
@@ -126,18 +110,26 @@ class _BluetoothListener(gobject.GObject):
 		)
 
 		bluetooth.advertise_service(self._socket, self._protocol["name"], self._protocol["uuid"])
+		self.emit("start_listening")
 
-	def close(self):
+	def stop(self):
+		if self._socket is None or self._incomingId is None:
+			return
 		gobject.source_remove(self._incomingId)
 		self._incomingId = None
 
 		bluetooth.stop_advertising(self._socket)
 		self._socket.close()
 		self._socket = None
-		self.emit("closed")
+		self.emit("stop_listening")
+
+	@property
+	def isListening(self):
+		return self._socket is not None and self._incomingId is not None
 
 	@property
 	def socket(self):
+		assert self._socket is not None
 		return self._socket
 
 	@misc_utils.log_exception(_moduleLogger)
@@ -145,7 +137,7 @@ class _BluetoothListener(gobject.GObject):
 		newSocket, (address, port) = self._socket.accept()
 		newSocket.settimeout(self._timeout)
 		connection = _BluetoothConnection(newSocket, address, self._protocol)
-		self.emit("incoming", connection)
+		self.emit("incoming_connection", connection)
 		return True
 
 
@@ -209,11 +201,6 @@ class BluetoothBackend(gobject.GObject):
 			gobject.TYPE_NONE,
 			(),
 		),
-		'incoming' : (
-			gobject.SIGNAL_RUN_LAST,
-			gobject.TYPE_NONE,
-			(gobject.TYPE_PYOBJECT, ),
-		),
 		'contacts_update' : (
 			gobject.SIGNAL_RUN_LAST,
 			gobject.TYPE_NONE,
@@ -226,8 +213,8 @@ class BluetoothBackend(gobject.GObject):
 		self._disco = None
 		self._timeout = 8
 		self._listeners = {}
-		self._listenerIds = {}
 		self._protocols = []
+		self._isListening = True
 
 	def add_protocol(self, protocol):
 		assert not self.is_logged_in()
@@ -235,12 +222,14 @@ class BluetoothBackend(gobject.GObject):
 
 	def login(self):
 		self._disco = _DeviceDiscoverer(self._timeout)
+
+		isListening = self._isListening
 		for protocol in self._protocols:
 			protoId = protocol["uuid"]
 			self._listeners[protoId] = _BluetoothListener(protocol, self._timeout)
-			self._listenerIds[protoId] = self._listeners[protoId].connect(
-				"incoming", self._on_incoming
-			)
+			if isListening:
+				self._listeners[protoId].start()
+
 		self.emit("login")
 
 	def logout(self):
@@ -261,6 +250,21 @@ class BluetoothBackend(gobject.GObject):
 			return True
 		else:
 			return False
+
+	def is_listening(self):
+		return self._isListening
+
+	def enable_listening(self, enable):
+		if enable:
+			for listener in self._listeners.itervalues():
+				assert not listener.isListening
+			for listener in self._listeners.itervalues():
+				listener.start()
+		else:
+			for listener in self._listeners.itervalues():
+				assert listener.isListening
+			for listener in self._listeners.itervalues():
+				listener.stop()
 
 	def get_contacts(self):
 		try:
@@ -294,11 +298,6 @@ class BluetoothBackend(gobject.GObject):
 			raise
 
 		return _BluetoothConnection(sock, addr, "")
-
-	@misc_utils.log_exception(_moduleLogger)
-	def _on_incoming(self, connection):
-		self.emit("incoming", connection)
-		return True
 
 
 gobject.type_register(BluetoothBackend)

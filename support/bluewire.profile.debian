@@ -7,5 +7,5 @@ SupportsInvisible = 1
 Capabilities = chat-p2p, voice-p2p, supports-alias, supports-roster
 VCardDefault = 1
 VCardField = X-BT
-SupportedPresences = offline,available
+SupportedPresences = offline,available,away,hidden
 

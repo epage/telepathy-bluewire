@@ -14,7 +14,9 @@ import aliasing
 #import avatars
 #import capabilities
 #import contacts
+import presence
 import requests
+import simple_presence
 
 import autogv
 import channel_manager
@@ -42,7 +44,9 @@ class BluewireConnection(
 	#avatars.AvatarsMixin,
 	#capabilities.CapabilitiesMixin,
 	#contacts.ContactsMixin,
+	presence.PresenceMixin,
 	requests.RequestsMixin,
+	simple_presence.SimplePresenceMixin,
 ):
 
 	# overiding base class variable
@@ -79,7 +83,9 @@ class BluewireConnection(
 		#avatars.AvatarsMixin.__init__(self)
 		#capabilities.CapabilitiesMixin.__init__(self)
 		#contacts.ContactsMixin.__init__(self)
+		presence.PresenceMixin.__init__(self)
 		requests.RequestsMixin.__init__(self)
+		simple_presence.SimplePresenceMixin.__init__(self)
 
 		self.__manager = weakref.proxy(manager)
 		self.__channelManager = channel_manager.ChannelManager(self)
